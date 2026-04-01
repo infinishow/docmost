@@ -293,4 +293,22 @@ export class EnvironmentService {
   getClickHouseUrl(): string {
     return this.configService.get<string>('CLICKHOUSE_URL');
   }
+
+  getGoogleClientId(): string {
+    return this.configService.get<string>('GOOGLE_CLIENT_ID');
+  }
+
+  getGoogleClientSecret(): string {
+    return this.configService.get<string>('GOOGLE_CLIENT_SECRET');
+  }
+
+  getGoogleAllowedDomains(): string[] {
+    const domains = this.configService.get<string>('GOOGLE_ALLOWED_DOMAINS', '');
+    if (!domains) return [];
+    return domains.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+  }
+
+  isGoogleAuthEnabled(): boolean {
+    return !!this.getGoogleClientId() && !!this.getGoogleClientSecret();
+  }
 }
