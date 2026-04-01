@@ -10,6 +10,10 @@ on:
       - 'memory/**'
       - 'workflow_docs/**'
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: [self-hosted, infinishow-office]
@@ -37,10 +41,14 @@ jobs:
       - name: Verify deployment
         run: bash scripts/verify-deployment.sh
 
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f .env
+
       - name: Notify deploy failure
         if: failure()
         run: |
-          source .env 2>/dev/null || true
+          if [ -f .env ]; then source .env; fi
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
             curl -sf -X POST "$SLACK_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
