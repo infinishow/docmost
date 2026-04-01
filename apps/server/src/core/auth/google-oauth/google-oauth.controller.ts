@@ -59,7 +59,7 @@ export class GoogleOAuthController {
     authUrl.searchParams.set('access_type', 'online');
     authUrl.searchParams.set('prompt', 'select_account');
 
-    return res.redirect(302, authUrl.toString());
+    return res.redirect(authUrl.toString());
   }
 
   @Get('callback')
@@ -115,19 +115,19 @@ export class GoogleOAuthController {
         secure: this.environmentService.isHttps(),
       });
 
-      return res.redirect(302, `${appUrl}${returnUrl}`);
-    } catch (error) {
-      this.logger.error(`Google OAuth callback error: ${error.message}`);
+      return res.redirect(`${appUrl}${returnUrl}`);
+    } catch (error: any) {
+      this.logger.error(`Google OAuth callback error: ${error?.message}`);
       return this.redirectWithError(
         res,
         appUrl,
-        error.message || 'Google login failed',
+        error?.message || 'Google login failed',
       );
     }
   }
 
   private redirectWithError(res: FastifyReply, appUrl: string, message: string) {
     const errorMsg = encodeURIComponent(message);
-    return res.redirect(302, `${appUrl}/login?error=${errorMsg}`);
+    return res.redirect(`${appUrl}/login?error=${errorMsg}`);
   }
 }
