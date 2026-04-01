@@ -15,6 +15,7 @@ import { FastifyReply, FastifyRequest } from 'fastify';
 import { SkipThrottle } from '@nestjs/throttler';
 
 const NONCE_COOKIE = 'google_oauth_nonce';
+const FRONTEND_URL_COOKIE = 'google_oauth_frontend_url';
 
 @SkipThrottle()
 @Controller('sso/google')
@@ -45,13 +46,15 @@ export class GoogleOAuthController {
       frontendUrl,
     });
 
-    res.setCookie(NONCE_COOKIE, nonce, {
+    const cookieOpts = {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: 'lax' as const,
       path: '/api/sso/google/callback',
       maxAge: 300,
       secure: this.environmentService.isHttps(),
-    });
+    };
+    res.setCookie(NONCE_COOKIE, nonce, cookieOpts);
+    res.setCookie(FRONTEND_URL_COOKIE, frontendUrl, cookieOpts);
 
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', clientId);
@@ -71,7 +74,9 @@ export class GoogleOAuthController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const fallbackUrl = this.environmentService.getAppUrl();
+    const frontendUrlFromCookie = req.cookies?.[FRONTEND_URL_COOKIE];
+    const fallbackUrl = frontendUrlFromCookie || this.environmentService.getAppUrl();
+    res.clearCookie(FRONTEND_URL_COOKIE, { path: '/api/sso/google/callback' });
 
     const googleUser = (req as any).user as GoogleProfile | null;
     if (!googleUser) {
