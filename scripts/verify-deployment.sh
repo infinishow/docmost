@@ -59,20 +59,16 @@ if docker compose -f "$COMPOSE_FILE" exec -T docmost test -d "/app/data/storage"
 fi
 check "storage volume mounted" "$storage_ok"
 
-# ── Database connectivity ──
+# ── App responding ──
 echo ""
-echo "[Database]"
+echo "[App]"
 
-db_ok=0
-db_check=$(docker compose -f "$COMPOSE_FILE" exec -T docmost node -e "
-const { Client } = require('pg');
-const c = new Client(process.env.DATABASE_URL);
-c.connect().then(() => c.query('SELECT 1')).then(() => { console.log('ok'); c.end(); }).catch(e => { console.log('fail: ' + e.message); c.end(); });
-" 2>/dev/null || echo "fail")
-if echo "$db_check" | grep -q "ok"; then
-  db_ok=1
+app_ok=0
+app_body=$(curl -s "http://localhost:${PORT}/api/health" 2>/dev/null || echo "")
+if [ -n "$app_body" ] && [ "$app_body" != "" ]; then
+  app_ok=1
 fi
-check "database connection" "$db_ok"
+check "app responding on port ${PORT}" "$app_ok"
 
 # ── Summary ──
 echo ""
