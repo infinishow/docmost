@@ -23,9 +23,6 @@ jobs:
         with:
           submodules: false
 
-      - name: Init required submodules (ee only)
-        run: git submodule update --init apps/server/src/ee
-
       - name: Decrypt production secrets
         run: /usr/local/bin/sops -d .env.production > .env
 
