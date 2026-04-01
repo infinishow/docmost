@@ -1,0 +1,57 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.claude/**'
+      - 'memory/**'
+      - 'workflow_docs/**'
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, infinishow-office]
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BUILD_APP_ID }}
+          private-key: ${{ secrets.BUILD_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Decrypt production secrets
+        run: /usr/local/bin/sops -d .env.production > .env
+
+      - name: Deploy
+        run: bash scripts/deploy.sh
+
+      - name: Verify deployment
+        run: bash scripts/verify-deployment.sh
+
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f .env
+
+      - name: Notify deploy failure
+        if: failure()
+        run: |
+          if [ -f .env ]; then source .env; fi
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\":\"[docmost] Deploy failed\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+              || true
+          fi
