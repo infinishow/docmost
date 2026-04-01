@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(workflow)",
+      "Skill(workflow-specify)",
+      "Skill(workflow-design)",
+      "Skill(workflow-implement)",
+      "Skill(workflow-verify)",
+      "Skill(workflow-ship)",
+      "Skill(resolve-pr-review)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(git show:*)",
+      "Bash(git show-ref:*)",
+      "Bash(mkdir:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(gh pr:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(pnpm:*)"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "extensions": {
+    "branch": true,
+    "pr": true,
+    "autoMerge": false,
+    "ci": false
+  }
+}
