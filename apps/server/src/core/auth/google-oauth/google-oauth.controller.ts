@@ -15,7 +15,6 @@ import { FastifyReply, FastifyRequest } from 'fastify';
 import { SkipThrottle } from '@nestjs/throttler';
 
 const NONCE_COOKIE = 'google_oauth_nonce';
-const FRONTEND_URL_COOKIE = 'google_oauth_frontend_url';
 
 @SkipThrottle()
 @Controller('sso/google')
@@ -35,26 +34,22 @@ export class GoogleOAuthController {
     @Query('returnUrl') returnUrl?: string,
   ) {
     const clientId = this.environmentService.getGoogleClientId();
-    const callbackUrl = `${this.environmentService.getAppUrl()}/api/sso/google/callback`;
-    const referer = (req.headers as any).referer || (req.headers as any).origin;
-    const frontendUrl = referer ? new URL(referer).origin : this.environmentService.getAppUrl();
+    const appUrl = this.environmentService.getAppUrl();
+    const callbackUrl = `${appUrl}/api/sso/google/callback`;
     const nonce = randomBytes(16).toString('hex');
     const state = JSON.stringify({
       workspaceId,
       returnUrl: returnUrl || '/',
       nonce,
-      frontendUrl,
     });
 
-    const cookieOpts = {
+    res.setCookie(NONCE_COOKIE, nonce, {
       httpOnly: true,
       sameSite: 'lax' as const,
       path: '/api/sso/google/callback',
       maxAge: 300,
       secure: this.environmentService.isHttps(),
-    };
-    res.setCookie(NONCE_COOKIE, nonce, cookieOpts);
-    res.setCookie(FRONTEND_URL_COOKIE, frontendUrl, cookieOpts);
+    });
 
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', clientId);
@@ -74,26 +69,21 @@ export class GoogleOAuthController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const frontendUrlFromCookie = req.cookies?.[FRONTEND_URL_COOKIE];
-    const fallbackUrl = frontendUrlFromCookie || this.environmentService.getAppUrl();
-    res.clearCookie(FRONTEND_URL_COOKIE, { path: '/api/sso/google/callback' });
+    const appUrl = this.environmentService.getAppUrl();
 
     const googleUser = (req as any).user as GoogleProfile | null;
     if (!googleUser) {
-      return this.redirectWithError(res, fallbackUrl, 'Google login was cancelled');
+      return this.redirectWithError(res, appUrl, 'Google login was cancelled');
     }
 
     let workspaceId: string;
     let nonce: string;
-    let appUrl: string;
     try {
       const state = JSON.parse(googleUser.state || '{}');
-      workspaceId = state.workspaceId || (req.raw as any)?.workspaceId;
+      workspaceId = state.workspaceId;
       nonce = state.nonce;
-      appUrl = state.frontendUrl || fallbackUrl;
     } catch {
-      workspaceId = (req.raw as any)?.workspaceId;
-      appUrl = fallbackUrl;
+      workspaceId = undefined;
     }
 
     const expectedNonce = req.cookies?.[NONCE_COOKIE];

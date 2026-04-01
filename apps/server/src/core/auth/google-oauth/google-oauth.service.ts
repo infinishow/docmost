@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   Inject,
@@ -68,7 +69,7 @@ export class GoogleOAuthService {
         {
           name: profile.name,
           email: profile.email,
-          password: crypto.randomUUID(),
+          password: randomUUID(),
         },
         workspaceId,
       );

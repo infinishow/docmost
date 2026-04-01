@@ -2,7 +2,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
-import { WorkspaceRepo } from '@docmost/db/repos/workspace/workspace.repo';
 
 @Injectable()
 export class GoogleOAuthSeedService implements OnModuleInit {
@@ -11,7 +10,6 @@ export class GoogleOAuthSeedService implements OnModuleInit {
   constructor(
     @InjectKysely() private readonly db: KyselyDB,
     private readonly environmentService: EnvironmentService,
-    private readonly workspaceRepo: WorkspaceRepo,
   ) {}
 
   async onModuleInit() {
