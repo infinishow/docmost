@@ -35,11 +35,14 @@ export class GoogleOAuthController {
   ) {
     const clientId = this.environmentService.getGoogleClientId();
     const callbackUrl = `${this.environmentService.getAppUrl()}/api/sso/google/callback`;
+    const referer = (req.headers as any).referer || (req.headers as any).origin;
+    const frontendUrl = referer ? new URL(referer).origin : this.environmentService.getAppUrl();
     const nonce = randomBytes(16).toString('hex');
     const state = JSON.stringify({
       workspaceId,
       returnUrl: returnUrl || '/',
       nonce,
+      frontendUrl,
     });
 
     res.setCookie(NONCE_COOKIE, nonce, {
@@ -59,7 +62,7 @@ export class GoogleOAuthController {
     authUrl.searchParams.set('access_type', 'online');
     authUrl.searchParams.set('prompt', 'select_account');
 
-    return res.redirect(authUrl.toString());
+    return res.code(302).redirect(authUrl.toString());
   }
 
   @Get('callback')
@@ -68,21 +71,24 @@ export class GoogleOAuthController {
     @Req() req: FastifyRequest,
     @Res() res: FastifyReply,
   ) {
-    const appUrl = this.environmentService.getAppUrl();
+    const fallbackUrl = this.environmentService.getAppUrl();
 
     const googleUser = (req as any).user as GoogleProfile | null;
     if (!googleUser) {
-      return this.redirectWithError(res, appUrl, 'Google login was cancelled');
+      return this.redirectWithError(res, fallbackUrl, 'Google login was cancelled');
     }
 
     let workspaceId: string;
     let nonce: string;
+    let appUrl: string;
     try {
       const state = JSON.parse(googleUser.state || '{}');
       workspaceId = state.workspaceId || (req.raw as any)?.workspaceId;
       nonce = state.nonce;
+      appUrl = state.frontendUrl || fallbackUrl;
     } catch {
       workspaceId = (req.raw as any)?.workspaceId;
+      appUrl = fallbackUrl;
     }
 
     const expectedNonce = req.cookies?.[NONCE_COOKIE];
@@ -115,7 +121,7 @@ export class GoogleOAuthController {
         secure: this.environmentService.isHttps(),
       });
 
-      return res.redirect(`${appUrl}${returnUrl}`);
+      return res.code(302).redirect(`${appUrl}${returnUrl}`);
     } catch (error: any) {
       this.logger.error(`Google OAuth callback error: ${error?.message}`);
       return this.redirectWithError(
@@ -128,6 +134,6 @@ export class GoogleOAuthController {
 
   private redirectWithError(res: FastifyReply, appUrl: string, message: string) {
     const errorMsg = encodeURIComponent(message);
-    return res.redirect(`${appUrl}/login?error=${errorMsg}`);
+    return res.code(302).redirect(`${appUrl}/login?error=${errorMsg}`);
   }
 }

@@ -11,10 +11,10 @@
     "reason": "5-10+ files across backend auth module and frontend login UI, multiple integration points (Passport strategy, callback, user provisioning, UI)"
   },
   "phase": {
-    "current": "design",
-    "status": "approved",
-    "draftCount": 1,
-    "history": ["specify"],
+    "current": "implement",
+    "status": "in_progress",
+    "draftCount": 0,
+    "history": ["specify", "design"],
     "history": []
   },
   "execution": {

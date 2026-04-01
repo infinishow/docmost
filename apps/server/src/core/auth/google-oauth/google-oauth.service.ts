@@ -69,7 +69,6 @@ export class GoogleOAuthService {
           name: profile.name,
           email: profile.email,
           password: crypto.randomUUID(),
-          role: UserRole.MEMBER,
         },
         workspaceId,
       );

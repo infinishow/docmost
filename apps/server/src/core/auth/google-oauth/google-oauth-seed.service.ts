@@ -15,6 +15,9 @@ export class GoogleOAuthSeedService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (!this.environmentService.isGoogleAuthEnabled()) {
+      return;
+    }
     await this.seedGoogleProvider();
   }
 
@@ -45,6 +48,7 @@ export class GoogleOAuthSeedService implements OnModuleInit {
       .select(['id'])
       .where('type', '=', 'google')
       .where('workspaceId', '=', workspaceId)
+      .limit(1)
       .executeTakeFirst();
 
     if (existing) {
@@ -59,28 +63,32 @@ export class GoogleOAuthSeedService implements OnModuleInit {
         })
         .where('id', '=', existing.id)
         .execute();
-
-      this.logger.log(
-        `Updated Google OAuth provider for workspace ${workspaceId}`,
-      );
     } else {
-      await this.db
-        .insertInto('authProviders')
-        .values({
-          name: 'Google',
-          type: 'google',
-          oidcClientId: this.environmentService.getGoogleClientId(),
-          oidcClientSecret: this.environmentService.getGoogleClientSecret(),
-          isEnabled: true,
-          allowSignup: true,
-          workspaceId,
-        })
-        .execute();
+      // Double-check to prevent race condition on fast restarts
+      const doubleCheck = await this.db
+        .selectFrom('authProviders')
+        .select(['id'])
+        .where('type', '=', 'google')
+        .where('workspaceId', '=', workspaceId)
+        .executeTakeFirst();
 
-      this.logger.log(
-        `Created Google OAuth provider for workspace ${workspaceId}`,
-      );
+      if (!doubleCheck) {
+        await this.db
+          .insertInto('authProviders')
+          .values({
+            name: 'Google',
+            type: 'google',
+            oidcClientId: this.environmentService.getGoogleClientId(),
+            oidcClientSecret: this.environmentService.getGoogleClientSecret(),
+            isEnabled: true,
+            allowSignup: true,
+            workspaceId,
+          })
+          .execute();
+      }
     }
+
+    this.logger.log(`Google OAuth provider synced for workspace ${workspaceId}`);
   }
 
   private async syncEmailDomains(

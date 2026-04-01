@@ -41,3 +41,6 @@ lerna-debug.log*
 .nx
 .nx/installation
 .nx/cache
+
+# Google OAuth credentials
+google-oauth-credentials.json
