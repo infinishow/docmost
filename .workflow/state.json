@@ -1,0 +1,36 @@
+{
+  "$schema": "workflow-state-v1",
+  "feature": {
+    "name": "SSO (OIDC) Authentication",
+    "slug": "sso-oidc",
+    "branch": "feat/sso-oidc"
+  },
+  "gear": {
+    "detected": 2,
+    "override": null,
+    "reason": "5-10+ files across backend auth module and frontend login UI, multiple integration points (Passport strategy, callback, user provisioning, UI)"
+  },
+  "phase": {
+    "current": "design",
+    "status": "in_progress",
+    "draftCount": 0,
+    "history": ["specify"],
+    "history": []
+  },
+  "execution": {
+    "mode": "manual",
+    "parallelMode": false
+  },
+  "artifacts": {
+    "spec": "workflow_docs/spec/sso-oidc.md",
+    "loadOnResume": ["workflow_docs/spec/sso-oidc.md"],
+    "design": "workflow_docs/design/sso-oidc.md",
+    "designStale": false
+  },
+  "feedback": [],
+  "insights": [],
+  "meta": {
+    "createdAt": "2026-04-01T12:00:00Z",
+    "workflowVersion": "1.0"
+  }
+}
