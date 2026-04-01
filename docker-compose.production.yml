@@ -1,0 +1,41 @@
+services:
+  docmost:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file: .env
+    ports:
+      - "${DOCMOST_PORT:-13000}:3000"
+    restart: unless-stopped
+    volumes:
+      - docmost_storage:/app/data/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  docmost_storage:
+  redis_data:
