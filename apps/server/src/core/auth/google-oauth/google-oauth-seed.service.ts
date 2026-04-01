@@ -16,9 +16,23 @@ export class GoogleOAuthSeedService implements OnModuleInit {
 
   async onModuleInit() {
     if (!this.environmentService.isGoogleAuthEnabled()) {
+      await this.disableGoogleProvider();
       return;
     }
     await this.seedGoogleProvider();
+  }
+
+  private async disableGoogleProvider() {
+    const result = await this.db
+      .updateTable('authProviders')
+      .set({ isEnabled: false, updatedAt: new Date() })
+      .where('type', '=', 'google')
+      .where('isEnabled', '=', true)
+      .execute();
+
+    if (result?.[0]?.numUpdatedRows > 0n) {
+      this.logger.log('Google OAuth provider disabled (env vars not set)');
+    }
   }
 
   private async seedGoogleProvider() {
