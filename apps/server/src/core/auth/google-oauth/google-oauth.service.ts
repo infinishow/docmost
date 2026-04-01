@@ -62,6 +62,8 @@ export class GoogleOAuthService {
         metadata: { source: 'google-oauth' },
       });
     } else {
+      await this.checkAllowSignup(workspaceId);
+
       user = await this.signupService.signup(
         {
           name: profile.name,
@@ -73,13 +75,6 @@ export class GoogleOAuthService {
       );
 
       await this.linkGoogleAccount(user.id, profile.googleId, workspaceId);
-
-      this.auditService.log({
-        event: AuditEvent.USER_CREATED,
-        resourceType: AuditResource.USER,
-        resourceId: user.id,
-        metadata: { source: 'google-oauth' },
-      });
     }
 
     const token = await this.sessionService.createSessionAndToken(user);
@@ -122,11 +117,34 @@ export class GoogleOAuthService {
     }
   }
 
+  private async checkAllowSignup(workspaceId: string) {
+    const provider = await this.db
+      .selectFrom('authProviders')
+      .select(['allowSignup', 'isEnabled'])
+      .where('type', '=', 'google')
+      .where('workspaceId', '=', workspaceId)
+      .executeTakeFirst();
+
+    if (!provider || !provider.isEnabled) {
+      throw new BadRequestException('Google authentication is not enabled');
+    }
+
+    if (!provider.allowSignup) {
+      throw new BadRequestException(
+        'New user registration via Google is not allowed',
+      );
+    }
+  }
+
   private parseReturnUrl(state?: string): string {
     if (!state) return '/';
     try {
       const parsed = JSON.parse(state);
-      return parsed.returnUrl || '/';
+      const url = parsed.returnUrl || '/';
+      if (typeof url !== 'string' || !url.startsWith('/') || url.startsWith('//')) {
+        return '/';
+      }
+      return url;
     } catch {
       return '/';
     }

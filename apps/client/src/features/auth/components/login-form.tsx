@@ -75,7 +75,7 @@ export function LoginForm() {
 
           {ssoError && (
             <Alert color="red" mb="sm">
-              {decodeURIComponent(ssoError)}
+              {decodeURIComponent(ssoError).slice(0, 200)}
             </Alert>
           )}
 

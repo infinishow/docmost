@@ -7,11 +7,14 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { GoogleOAuthService, GoogleProfile } from './google-oauth.service';
 import { EnvironmentService } from '../../../integrations/environment/environment.service';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { SkipThrottle } from '@nestjs/throttler';
+
+const NONCE_COOKIE = 'google_oauth_nonce';
 
 @SkipThrottle()
 @Controller('sso/google')
@@ -32,7 +35,20 @@ export class GoogleOAuthController {
   ) {
     const clientId = this.environmentService.getGoogleClientId();
     const callbackUrl = `${this.environmentService.getAppUrl()}/api/sso/google/callback`;
-    const state = JSON.stringify({ workspaceId, returnUrl: returnUrl || '/' });
+    const nonce = randomBytes(16).toString('hex');
+    const state = JSON.stringify({
+      workspaceId,
+      returnUrl: returnUrl || '/',
+      nonce,
+    });
+
+    res.setCookie(NONCE_COOKIE, nonce, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/api/sso/google/callback',
+      maxAge: 300,
+      secure: this.environmentService.isHttps(),
+    });
 
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', clientId);
@@ -56,21 +72,32 @@ export class GoogleOAuthController {
 
     const googleUser = (req as any).user as GoogleProfile | null;
     if (!googleUser) {
-      const errorMsg = encodeURIComponent('Google 로그인이 취소되었습니다');
-      return res.redirect(302, `${appUrl}/login?error=${errorMsg}`);
+      return this.redirectWithError(res, appUrl, 'Google login was cancelled');
     }
 
     let workspaceId: string;
+    let nonce: string;
     try {
       const state = JSON.parse(googleUser.state || '{}');
       workspaceId = state.workspaceId || (req.raw as any)?.workspaceId;
+      nonce = state.nonce;
     } catch {
       workspaceId = (req.raw as any)?.workspaceId;
     }
 
+    const expectedNonce = req.cookies?.[NONCE_COOKIE];
+    res.clearCookie(NONCE_COOKIE, { path: '/api/sso/google/callback' });
+
+    if (!nonce || !expectedNonce || nonce !== expectedNonce) {
+      return this.redirectWithError(
+        res,
+        appUrl,
+        'Invalid OAuth state. Please try again.',
+      );
+    }
+
     if (!workspaceId) {
-      const errorMsg = encodeURIComponent('Workspace를 찾을 수 없습니다');
-      return res.redirect(302, `${appUrl}/login?error=${errorMsg}`);
+      return this.redirectWithError(res, appUrl, 'Workspace not found');
     }
 
     try {
@@ -91,10 +118,16 @@ export class GoogleOAuthController {
       return res.redirect(302, `${appUrl}${returnUrl}`);
     } catch (error) {
       this.logger.error(`Google OAuth callback error: ${error.message}`);
-      const errorMsg = encodeURIComponent(
-        error.message || 'Google 로그인에 실패했습니다',
+      return this.redirectWithError(
+        res,
+        appUrl,
+        error.message || 'Google login failed',
       );
-      return res.redirect(302, `${appUrl}/login?error=${errorMsg}`);
     }
+  }
+
+  private redirectWithError(res: FastifyReply, appUrl: string, message: string) {
+    const errorMsg = encodeURIComponent(message);
+    return res.redirect(302, `${appUrl}/login?error=${errorMsg}`);
   }
 }
