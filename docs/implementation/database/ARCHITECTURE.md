@@ -4,6 +4,8 @@
 
 이 문서는 Docmost 위에 Notion식 Database 기능을 구현한다고 가정했을 때의 전체 아키텍처 초안이다. 한 번에 모든 기능을 구현하는 것이 아니라, phase별로 확장 가능한 구조를 먼저 잡는 것을 목표로 한다.
 
+주의: 이 문서는 target architecture와 배경 설계를 설명한다. Phase 1 구현 계약의 source of truth는 `docs/implementation/database/phase-1/DESIGN.md`다. 둘 사이에 module 이름, API route, DTO 세부사항이 다르면 Phase 1에서는 `DESIGN.md`를 따른다.
+
 관련 문서:
 
 - `docs/research/NOTION_DATABASE_RESEARCH.md`
@@ -78,7 +80,7 @@ Client
     websocket event handler
 
 Server
-  core/database 또는 core/data-source
+  core/databases
     data source service
     property schema service
     record service
@@ -99,7 +101,7 @@ Postgres
 
 ```text
 Page
-  Database page 또는 Database block
+  Database page 또는 Database block/linked view
     DataSource
       Properties schema
       Records
@@ -387,12 +389,12 @@ Property별 보안 권한이나 view별 보안 권한은 만들지 않는다.
 
 ## Server Architecture
 
-서버에는 새 도메인 모듈을 둔다.
+서버에는 새 도메인 모듈을 둔다. Phase 1의 확정 이름은 `core/databases`다.
 
 ```text
-apps/server/src/core/database/
-  database.module.ts
-  database.controller.ts
+apps/server/src/core/databases/
+  databases.module.ts
+  databases.controller.ts
   dto/
     create-data-source.dto.ts
     update-data-source.dto.ts
@@ -413,7 +415,7 @@ apps/server/src/core/database/
     database-permission.service.ts
 ```
 
-주의할 점은 `apps/server/src/database`가 이미 infra/database 계층이라는 것이다. 제품 도메인 이름으로 `core/database`를 쓰면 의미는 자연스럽지만, 혼동이 크면 `core/data-source` 또는 `core/structured-data`도 고려할 수 있다.
+주의할 점은 `apps/server/src/database`가 이미 infra/database 계층이라는 것이다. 그래서 Phase 1에서는 제품 도메인 모듈을 단수 `core/database`가 아니라 복수 `core/databases`로 둔다.
 
 ### API 그룹
 
@@ -433,26 +435,24 @@ View API
   query records by view
 ```
 
-예상 endpoint:
+Phase 1 endpoint는 기존 Docmost controller 패턴에 맞춰 action-style POST route를 사용한다. 정확한 request/response contract는 `phase-1/DESIGN.md`를 따른다.
 
 ```text
-POST   /api/data-sources
-GET    /api/data-sources/:id
-PATCH  /api/data-sources/:id
-DELETE /api/data-sources/:id
-
-POST   /api/data-sources/:id/properties
-PATCH  /api/data-sources/:id/properties/:propertyId
-DELETE /api/data-sources/:id/properties/:propertyId
-
-POST   /api/data-sources/:id/records
-DELETE /api/data-sources/:id/records/:recordId
-PATCH  /api/data-sources/:id/records/:recordId/properties/:propertyId
-
-POST   /api/data-sources/:id/views
-PATCH  /api/data-sources/:id/views/:viewId
-DELETE /api/data-sources/:id/views/:viewId
-GET    /api/data-sources/:id/views/:viewId/records
+POST /databases/create
+POST /databases/info
+POST /databases/update
+POST /databases/delete
+POST /databases/properties/create
+POST /databases/properties/update
+POST /databases/properties/delete
+POST /databases/records/create
+POST /databases/records/update
+POST /databases/records/delete
+POST /databases/records/query
+POST /databases/values/update
+POST /databases/views/create
+POST /databases/views/update
+POST /databases/views/delete
 ```
 
 ## Query Architecture
@@ -748,7 +748,7 @@ Inline database block은 Phase 5에서 붙인다. 이때 full-page database의 t
 
 목표:
 
-- property value version 적용
+- public optimistic concurrency/baseVersion enforcement 적용
 - transaction 정책 확정
 - database websocket event 추가
 - React Query invalidate/refetch 연결
@@ -835,52 +835,43 @@ Formula
 | 권한 | parent page/space 권한 상속 |
 | relation/rollup/formula | MVP 이후 |
 
-## 열린 쟁점
+## 결정된 쟁점과 후속 쟁점
 
 ### 1. 도메인 이름
 
-후보:
-
-```text
-core/database
-core/data-source
-core/structured-data
-```
-
-`core/database`는 제품 개념과 맞지만 infra `src/database`와 혼동될 수 있다.
+Phase 1에서는 `core/databases`로 결정한다. `apps/server/src/database`는 DB infra 계층이므로 제품 도메인 모듈을 단수 `core/database`로 두지 않는다.
 
 ### 2. Full-page database를 page type으로 볼지
 
-선택지:
+Phase 1 기준 결정:
 
 ```text
-pages.type = database 추가
-별도 data_sources.parent_page_id만 사용
+기존 pages row가 data_sources row 하나를 소유한다.
+data_sources.parent_page_id는 장기적으로도 data source의 소유 page다.
 ```
 
-Docmost의 기존 page tree, trash, permission, search와 얼마나 통합할지에 따라 결정해야 한다.
+후속 phase에서 이 page를 database page처럼 렌더링하는 UI/page type 표현은 별도 설계로 확정한다. 별도 container table은 만들지 않는다.
 
 ### 3. Record ordering
 
-Table view에서 수동 row ordering을 지원할지, 아니면 sort 없는 경우 created_at 기준으로만 보여줄지 결정해야 한다.
-
-초기 추천:
+Phase 1 기준 결정:
 
 ```text
-sort가 없으면 created_at asc 또는 position asc
-수동 reorder는 후순위
+position varchar
+fractional-indexing-jittered 사용
+sort가 없으면 position asc, id asc
+수동 reorder는 update position으로만 지원
 ```
 
 ### 4. Select option 삭제 정책
 
-선택지가 삭제되었을 때 기존 cell 값을 어떻게 처리할지 정해야 한다.
-
-초기 추천:
+Phase 1 기준 결정:
 
 ```text
-option은 soft delete 또는 archived 처리
+option은 archived 처리
 기존 값은 깨지지 않게 표시
 새 선택에서는 제외
+sort/filter는 stable option id와 sortKey 기준
 ```
 
 ### 5. Import/export

@@ -64,7 +64,7 @@ Phase 1 contract
 
 `data_sources.parent_page_id`만으로는 page lifecycle이 자동으로 해결되지 않는다. DataSource는 `pages` tree 밖의 테이블이므로, parent page 상태 변화에 대한 규칙이 필요하다.
 
-Spec에서 정해야 할 항목:
+1차 리뷰 당시 spec에서 정해야 했던 항목:
 
 ```text
 Parent page soft delete
@@ -209,7 +209,7 @@ data_source_views(data_source_id, position)
 
 `data_sources`가 `workspace_id`, `space_id`, `parent_page_id`를 모두 가지면 parent page와 값이 어긋날 수 있다.
 
-Spec에서 다음 중 하나를 정해야 한다.
+1차 리뷰 당시 다음 중 하나를 정해야 했다.
 
 ```text
 Option A
@@ -230,6 +230,8 @@ Phase 1에서는 workspace_id/space_id를 저장하되,
 parent page move 연동은 Phase 1 spec에서 defer 또는 명시 구현 중 하나로 결정한다.
 ```
 
+2차 리뷰 반영 후 현재 결정은 `workspace_id`/`space_id`를 저장하고, page move-to-space 시 `data_sources.space_id`도 같은 transaction에서 동기화하는 것이다.
+
 ### 7. API route와 ID 의미 명확화
 
 `/databases/*` route는 사용자-facing 이름으로는 괜찮다. 다만 Phase 1에서 `databaseId`가 실제로 무엇을 가리키는지 명확해야 한다.
@@ -238,7 +240,8 @@ Spec에 다음을 적는다.
 
 ```text
 Phase 1 API의 databaseId는 data_sources.id다.
-Phase 1에는 database block id나 full-page database page id가 없다.
+Phase 1에는 database block id나 linked database container id가 없다.
+후속 full-page database도 기존 pages row가 data_sources row 하나를 소유하는 방식으로 확장한다.
 View id는 data_source_views.id다.
 Record id는 data_source_records.id다.
 ```
@@ -335,7 +338,8 @@ date
 
 select
   value_json에는 option id 저장
-  text_value에는 option label 또는 sort key 저장 여부 결정
+  1차 리뷰 당시 text_value에 option label 또는 sort key 중 무엇을 저장할지 미정
+  2차 리뷰 반영 후 현재 결정은 option sortKey 저장
 
 multi_select
   value_json에는 option id 배열 저장
@@ -413,3 +417,66 @@ Spec 작성 전 다음 질문에 답해야 한다.
 9. core module 이름을 무엇으로 할지 정했는가?
 10. search/audit/notification/websocket defer 범위가 명확한가?
 ```
+
+## 2차 설계 리뷰 반영 기록
+
+작성일: 2026-06-11
+
+Phase 1 `DESIGN.md` 작성 후 별도 리뷰에서 다음 보강점이 나왔다. 구현 계획으로 넘어가기 전에 spec에 반영한다.
+
+### 반영한 결정
+
+```text
+Parent page move
+  data_sources.space_id를 유지한다.
+  page move-to-space transaction에서 parent_page_id가 이동 page 집합에 포함된 data source의 space_id도 동기화한다.
+  drift가 발견되면 외부 응답은 NotFound, 서버 log는 integrity error로 처리한다.
+
+DataSource delete lifecycle
+  /databases/delete는 data_sources.deleted_at만 soft delete한다.
+  child rows는 즉시 soft delete하지 않는다.
+  모든 child API는 active data source 조건으로 NotFound 처리한다.
+  hard delete는 FK cascade에 맡긴다.
+
+Future full-page database mapping
+  별도 container table을 만들지 않는다.
+  기존 pages row가 data_sources row 하나를 소유한다.
+  Phase 1 parent_page_id는 장기적으로도 owner page다.
+
+Permission matrix
+  readData/writeData/writeSchema/writeView를 개념적으로 분리한다.
+  Phase 1에서는 readData는 validateCanView, 나머지는 validateCanEdit으로 매핑한다.
+  /databases/info 응답에 capability flags를 포함한다.
+
+Property value integrity
+  data_source_property_values에 data_source_id를 추가한다.
+  record/property/value가 같은 data source에 속하는지 DB constraint 또는 service/repo 테스트로 보장한다.
+
+Position
+  pages.position과 같은 varchar fractional indexing key를 사용한다.
+  order는 COLLATE "C"와 id tie-breaker를 사용한다.
+
+Select option
+  cell value_json에는 stable option id를 저장한다.
+  helper text_value에는 option sortKey를 저장한다.
+  option delete는 archived 처리한다.
+
+Query contract
+  view filter와 request filter는 AND로 결합한다.
+  request sort는 view sort를 대체한다.
+  filter AST, sort shape, null ordering, case sensitivity, date timezone 규칙을 명시한다.
+
+Testing
+  service unit test만으로 완료하지 않는다.
+  migration, permission leakage, lifecycle, soft delete filtering, query SQL, integrity 테스트를 필수로 둔다.
+```
+
+### 구현 계획으로 넘기기 전 남은 확인
+
+```text
+1. Composite FK를 migration에서 그대로 구현할지, DB constraint와 service validation 조합으로 나눌지.
+2. page move-to-space 동기화를 PageService에 직접 넣을지, data source repo/service를 주입해 처리할지.
+3. cursor pagination helper가 multi sort + nulls last를 얼마나 직접 지원하는지.
+```
+
+위 항목은 spec의 방향을 바꾸는 질문이 아니라 implementation plan에서 파일 단위 작업으로 쪼갤 때 확인할 항목이다.
