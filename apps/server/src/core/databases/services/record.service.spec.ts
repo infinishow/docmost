@@ -1,3 +1,8 @@
+import 'reflect-metadata';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { QueryRecordsDto } from '../dto/query.dto';
+import { DataSourcePropertyType } from './property-value-normalizer';
 import { RecordService } from './record.service';
 
 describe('RecordService', () => {
@@ -10,6 +15,7 @@ describe('RecordService', () => {
     softDelete: jest.fn(),
     incrementVersion: jest.fn(),
     findActiveByDataSource: jest.fn(),
+    query: jest.fn(),
     findValuesByRecordIds: jest.fn(),
   };
   const propertyRepo = { findActiveByDataSource: jest.fn() };
@@ -38,6 +44,12 @@ describe('RecordService', () => {
     id: 'property-1',
     dataSourceId: databaseId,
     type: 'text',
+    configJson: {},
+  } as any;
+  const multiSelectProperty = {
+    id: 'property-multi',
+    dataSourceId: databaseId,
+    type: DataSourcePropertyType.MultiSelect,
     configJson: {},
   } as any;
   const foreignPropertyId = 'foreign-property';
@@ -95,7 +107,8 @@ describe('RecordService', () => {
 
   it('returns queried values keyed by property id', async () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
-    recordRepo.findActiveByDataSource.mockResolvedValue({
+    propertyRepo.findActiveByDataSource.mockResolvedValue([property]);
+    recordRepo.query.mockResolvedValue({
       items: [record],
       meta: { hasNextPage: false },
     });
@@ -112,6 +125,11 @@ describe('RecordService', () => {
 
     const result = await service.query({ databaseId }, user);
 
+    expect(recordRepo.query).toHaveBeenCalledWith({
+      databaseId,
+      cursor: undefined,
+      limit: 50,
+    });
     expect(result.items[0].values).toEqual({
       [property.id]: {
         id: 'value-1',
@@ -121,5 +139,40 @@ describe('RecordService', () => {
         updatedAt: new Date('2026-06-11T00:00:00.000Z'),
       },
     });
+  });
+
+  it('rejects multi select filters in phase one', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([
+      multiSelectProperty,
+    ]);
+
+    await expect(
+      service.query(
+        {
+          databaseId,
+          filter: {
+            propertyId: multiSelectProperty.id,
+            operator: 'contains',
+            value: 'option-1',
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Unsupported filter property type');
+
+    expect(recordRepo.query).not.toHaveBeenCalled();
+  });
+
+  it('caps query limit at 100 through DTO validation', async () => {
+    const dto = plainToInstance(QueryRecordsDto, {
+      databaseId: '00000000-0000-4000-8000-000000000001',
+      limit: 101,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].property).toBe('limit');
   });
 });

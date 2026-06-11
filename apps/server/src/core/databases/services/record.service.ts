@@ -8,7 +8,12 @@ import { InjectKysely } from 'nestjs-kysely';
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-source-property.repo';
 import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
-import { DataSourceRecordRepo } from '@docmost/db/repos/data-source/data-source-record.repo';
+import {
+  DataSourceRecordQueryFilter,
+  DataSourceRecordQueryOptions,
+  DataSourceRecordQuerySort,
+  DataSourceRecordRepo,
+} from '@docmost/db/repos/data-source/data-source-record.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 import {
   DataSourceProperty,
@@ -21,7 +26,10 @@ import { executeTx } from '@docmost/db/utils';
 import { CreateRecordDto, UpdateRecordDto } from '../dto/record.dto';
 import { QueryRecordsDto } from '../dto/query.dto';
 import { DatabasePermissionService } from './database-permission.service';
-import { normalizePropertyValue } from './property-value-normalizer';
+import {
+  DataSourcePropertyType,
+  normalizePropertyValue,
+} from './property-value-normalizer';
 
 @Injectable()
 export class RecordService {
@@ -49,7 +57,8 @@ export class RecordService {
         {
           dataSourceId: dataSource.id,
           position:
-            dto.position ?? generateJitteredKeyBetween(lastPosition ?? null, null),
+            dto.position ??
+            generateJitteredKeyBetween(lastPosition ?? null, null),
           createdById: user.id,
         },
         trx,
@@ -64,9 +73,13 @@ export class RecordService {
         for (const [propertyId, value] of Object.entries(dto.values)) {
           const property = propertyById.get(propertyId);
           if (!property) {
-            throw new BadRequestException('Property does not belong to database');
+            throw new BadRequestException(
+              'Property does not belong to database',
+            );
           }
-          values.push(await this.upsertValue(record, property, value, user, trx));
+          values.push(
+            await this.upsertValue(record, property, value, user, trx),
+          );
         }
         if (values.length > 0) {
           await this.recordRepo.incrementVersion(record.id, trx);
@@ -106,15 +119,22 @@ export class RecordService {
   async query(dto: QueryRecordsDto, user: User) {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
     await this.validateRead(dataSource, user);
-    const result = await this.recordRepo.findActiveByDataSource(dataSource.id, {
+    const properties = await this.propertyRepo.findActiveByDataSource(
+      dataSource.id,
+    );
+    const queryConfig = this.buildQueryConfig(dto, properties);
+    const result = await this.recordRepo.query({
+      databaseId: dataSource.id,
       limit: dto.limit ?? 50,
       cursor: dto.cursor,
-      query: '',
-      adminView: false,
+      ...queryConfig,
     });
     const recordIds = result.items.map((record) => record.id);
     const values = await this.findValuesByRecordIds(recordIds);
-    const valuesByRecordId = new Map<string, Record<string, RecordValueResponse>>();
+    const valuesByRecordId = new Map<
+      string,
+      Record<string, RecordValueResponse>
+    >();
     for (const value of values) {
       const bucket = valuesByRecordId.get(value.recordId) ?? {};
       bucket[value.propertyId] = toRecordValueResponse(value);
@@ -158,6 +178,76 @@ export class RecordService {
     return this.recordRepo.findValuesByRecordIds(recordIds);
   }
 
+  private buildQueryConfig(
+    dto: QueryRecordsDto,
+    properties: DataSourceProperty[],
+  ): Pick<DataSourceRecordQueryOptions, 'filter' | 'sort'> {
+    const propertyById = new Map(properties.map((item) => [item.id, item]));
+    const filter = this.buildFilter(dto.filter, propertyById);
+    const sort = this.buildSort(dto.sort, propertyById);
+    return {
+      ...(filter ? { filter } : {}),
+      ...(sort ? { sort } : {}),
+    };
+  }
+
+  private buildFilter(
+    filter: unknown,
+    propertyById: Map<string, DataSourceProperty>,
+  ): DataSourceRecordQueryFilter | undefined {
+    if (filter === undefined || filter === null) return undefined;
+    if (!isRecord(filter)) throw new BadRequestException('Invalid filter');
+
+    const { propertyId, operator, value } = filter;
+    if (typeof propertyId !== 'string') {
+      throw new BadRequestException('Invalid filter property');
+    }
+    if (operator !== 'contains' && operator !== 'equals') {
+      throw new BadRequestException('Invalid filter operator');
+    }
+
+    const property = propertyById.get(propertyId);
+    if (!property) throw new BadRequestException('Filter property not found');
+    if (
+      property.type === DataSourcePropertyType.MultiSelect ||
+      property.type === DataSourcePropertyType.Person
+    ) {
+      throw new BadRequestException('Unsupported filter property type');
+    }
+    if (operator === 'contains' && !isTextFilterType(property.type)) {
+      throw new BadRequestException('Unsupported filter operator');
+    }
+    if (operator === 'contains' && typeof value !== 'string') {
+      throw new BadRequestException('Filter value must be a string');
+    }
+
+    return { propertyId, type: property.type, operator, value };
+  }
+
+  private buildSort(
+    sort: unknown,
+    propertyById: Map<string, DataSourceProperty>,
+  ): DataSourceRecordQuerySort | undefined {
+    if (sort === undefined || sort === null) return undefined;
+    if (!isRecord(sort)) throw new BadRequestException('Invalid sort');
+
+    const { propertyId, direction = 'asc' } = sort;
+    if (typeof propertyId !== 'string') {
+      throw new BadRequestException('Invalid sort property');
+    }
+    if (direction !== 'asc' && direction !== 'desc') {
+      throw new BadRequestException('Invalid sort direction');
+    }
+
+    const property = propertyById.get(propertyId);
+    if (!property) throw new BadRequestException('Sort property not found');
+    if (!isSupportedSortType(property.type)) {
+      throw new BadRequestException('Unsupported sort property type');
+    }
+
+    return { propertyId, type: property.type, direction };
+  }
+
   private async findActiveDataSource(databaseId: string) {
     const dataSource = await this.dataSourceRepo.findActiveById(databaseId);
     if (!dataSource) throw new NotFoundException('Database not found');
@@ -191,6 +281,34 @@ export class RecordService {
       throw err;
     }
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isTextFilterType(type: string): boolean {
+  return [
+    DataSourcePropertyType.Title,
+    DataSourcePropertyType.Text,
+    DataSourcePropertyType.Url,
+    DataSourcePropertyType.Email,
+    DataSourcePropertyType.Phone,
+  ].includes(type as DataSourcePropertyType);
+}
+
+function isSupportedSortType(type: string): boolean {
+  return [
+    DataSourcePropertyType.Title,
+    DataSourcePropertyType.Text,
+    DataSourcePropertyType.Url,
+    DataSourcePropertyType.Email,
+    DataSourcePropertyType.Phone,
+    DataSourcePropertyType.Number,
+    DataSourcePropertyType.Checkbox,
+    DataSourcePropertyType.Date,
+    DataSourcePropertyType.Select,
+  ].includes(type as DataSourcePropertyType);
 }
 
 type RecordValueResponse = {
