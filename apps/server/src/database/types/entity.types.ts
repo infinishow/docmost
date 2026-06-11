@@ -4,6 +4,11 @@ import {
   AiChatMessages,
   Attachments,
   Comments,
+  DataSourceProperties,
+  DataSourcePropertyValues,
+  DataSourceRecords,
+  DataSources,
+  DataSourceViews,
   Groups,
   Labels,
   Notifications,
@@ -98,6 +103,40 @@ export type UpdatableGroupUser = Updateable<Omit<GroupUsers, 'id'>>;
 export type Page = Selectable<Pages>;
 export type InsertablePage = Insertable<Pages>;
 export type UpdatablePage = Updateable<Omit<Pages, 'id'>>;
+
+// DataSource
+export type DataSource = Selectable<DataSources>;
+export type InsertableDataSource = Insertable<DataSources>;
+export type UpdatableDataSource = Updateable<Omit<DataSources, 'id'>>;
+
+// DataSourceProperty
+export type DataSourceProperty = Selectable<DataSourceProperties>;
+export type InsertableDataSourceProperty = Insertable<DataSourceProperties>;
+export type UpdatableDataSourceProperty = Updateable<
+  Omit<DataSourceProperties, 'id'>
+>;
+
+// DataSourceRecord
+export type DataSourceRecord = Selectable<DataSourceRecords>;
+export type InsertableDataSourceRecord = Insertable<DataSourceRecords>;
+export type UpdatableDataSourceRecord = Updateable<
+  Omit<DataSourceRecords, 'id'>
+>;
+
+// DataSourcePropertyValue
+export type DataSourcePropertyValue = Selectable<DataSourcePropertyValues>;
+export type InsertableDataSourcePropertyValue =
+  Insertable<DataSourcePropertyValues>;
+export type UpdatableDataSourcePropertyValue = Updateable<
+  Omit<DataSourcePropertyValues, 'id'>
+>;
+
+// DataSourceView
+export type DataSourceView = Selectable<DataSourceViews>;
+export type InsertableDataSourceView = Insertable<DataSourceViews>;
+export type UpdatableDataSourceView = Updateable<
+  Omit<DataSourceViews, 'id'>
+>;
 
 // PageHistory
 export type PageHistory = Selectable<History>;
