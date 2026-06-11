@@ -374,11 +374,13 @@ export class WorkspaceService {
         }
       }
 
+      const trashRetentionDays = Number(ws.trashRetentionDays);
+
       if (
         typeof updateWorkspaceDto.trashRetentionDays !== 'undefined' &&
-        updateWorkspaceDto.trashRetentionDays !== ws.trashRetentionDays
+        updateWorkspaceDto.trashRetentionDays !== trashRetentionDays
       ) {
-        before.trashRetentionDays = ws.trashRetentionDays;
+        before.trashRetentionDays = trashRetentionDays;
         after.trashRetentionDays = updateWorkspaceDto.trashRetentionDays;
       }
     }
