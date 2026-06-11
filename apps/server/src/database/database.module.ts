@@ -31,6 +31,11 @@ import { PageListener } from '@docmost/db/listeners/page.listener';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import * as postgres from 'postgres';
 import { normalizePostgresUrl } from '../common/helpers';
+import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
+import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-source-property.repo';
+import { DataSourceRecordRepo } from '@docmost/db/repos/data-source/data-source-record.repo';
+import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
+import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 
 @Global()
 @Module({
@@ -92,6 +97,11 @@ import { normalizePostgresUrl } from '../common/helpers';
     WatcherRepo,
     LabelRepo,
     TemplateRepo,
+    DataSourceRepo,
+    DataSourcePropertyRepo,
+    DataSourceRecordRepo,
+    DataSourcePropertyValueRepo,
+    DataSourceViewRepo,
     PageListener,
   ],
   exports: [
@@ -117,6 +127,11 @@ import { normalizePostgresUrl } from '../common/helpers';
     WatcherRepo,
     LabelRepo,
     TemplateRepo,
+    DataSourceRepo,
+    DataSourcePropertyRepo,
+    DataSourceRecordRepo,
+    DataSourcePropertyValueRepo,
+    DataSourceViewRepo,
   ],
 })
 export class DatabaseModule implements OnApplicationBootstrap {
