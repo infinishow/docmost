@@ -119,6 +119,11 @@ export class RecordService {
   async query(dto: QueryRecordsDto, user: User) {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
     await this.validateRead(dataSource, user);
+    if (dto.viewId) {
+      throw new BadRequestException(
+        'View queries are not supported in phase one',
+      );
+    }
     const properties = await this.propertyRepo.findActiveByDataSource(
       dataSource.id,
     );
@@ -185,6 +190,11 @@ export class RecordService {
     const propertyById = new Map(properties.map((item) => [item.id, item]));
     const filter = this.buildFilter(dto.filter, propertyById);
     const sort = this.buildSort(dto.sort, propertyById);
+    if (dto.cursor && sort) {
+      throw new BadRequestException(
+        'Sorted cursor pagination is not supported in phase one',
+      );
+    }
     return {
       ...(filter ? { filter } : {}),
       ...(sort ? { sort } : {}),
@@ -221,7 +231,13 @@ export class RecordService {
       throw new BadRequestException('Filter value must be a string');
     }
 
-    return { propertyId, type: property.type, operator, value };
+    return {
+      propertyId,
+      type: property.type,
+      operator,
+      value:
+        operator === 'equals' ? normalizeFilterValue(property, value) : value,
+    };
   }
 
   private buildSort(
@@ -309,6 +325,28 @@ function isSupportedSortType(type: string): boolean {
     DataSourcePropertyType.Date,
     DataSourcePropertyType.Select,
   ].includes(type as DataSourcePropertyType);
+}
+
+function normalizeFilterValue(
+  property: DataSourceProperty,
+  value: unknown,
+): unknown {
+  const normalized = normalizePropertyValue({
+    type: property.type,
+    value,
+    config: property.configJson as Record<string, any>,
+  });
+
+  if (property.type === DataSourcePropertyType.Number) {
+    return normalized.numberValue;
+  }
+  if (property.type === DataSourcePropertyType.Checkbox) {
+    return normalized.boolValue;
+  }
+  if (property.type === DataSourcePropertyType.Date) {
+    return normalized.dateValue;
+  }
+  return normalized.textValue;
 }
 
 type RecordValueResponse = {

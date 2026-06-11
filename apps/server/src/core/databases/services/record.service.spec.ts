@@ -52,6 +52,14 @@ describe('RecordService', () => {
     type: DataSourcePropertyType.MultiSelect,
     configJson: {},
   } as any;
+  const selectProperty = {
+    id: 'property-select',
+    dataSourceId: databaseId,
+    type: DataSourcePropertyType.Select,
+    configJson: {
+      options: [{ id: 'todo', name: 'Todo', sortKey: '001' }],
+    },
+  } as any;
   const foreignPropertyId = 'foreign-property';
 
   beforeEach(() => jest.clearAllMocks());
@@ -162,6 +170,68 @@ describe('RecordService', () => {
     ).rejects.toThrow('Unsupported filter property type');
 
     expect(recordRepo.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects view-backed queries in phase one instead of ignoring viewId', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.query({ databaseId, viewId: 'view-1' }, user),
+    ).rejects.toThrow('View queries are not supported');
+
+    expect(recordRepo.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects sorted cursor pagination until sort keys are cursor-safe', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([property]);
+
+    await expect(
+      service.query(
+        {
+          databaseId,
+          cursor: 'cursor-1',
+          sort: { propertyId: property.id, direction: 'asc' },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Sorted cursor pagination is not supported');
+
+    expect(recordRepo.query).not.toHaveBeenCalled();
+  });
+
+  it('normalizes select equals filters to helper column values', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([selectProperty]);
+    recordRepo.query.mockResolvedValue({
+      items: [],
+      meta: { hasNextPage: false },
+    });
+    recordRepo.findValuesByRecordIds.mockResolvedValue([]);
+
+    await service.query(
+      {
+        databaseId,
+        filter: {
+          propertyId: selectProperty.id,
+          operator: 'equals',
+          value: 'todo',
+        },
+      },
+      user,
+    );
+
+    expect(recordRepo.query).toHaveBeenCalledWith({
+      databaseId,
+      cursor: undefined,
+      limit: 50,
+      filter: {
+        propertyId: selectProperty.id,
+        type: DataSourcePropertyType.Select,
+        operator: 'equals',
+        value: '001',
+      },
+    });
   });
 
   it('caps query limit at 100 through DTO validation', async () => {

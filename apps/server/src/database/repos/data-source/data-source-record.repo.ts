@@ -214,11 +214,14 @@ export class DataSourceRecordRepo {
           `%${String(opts.filter.value)}%`,
         );
       } else {
-        query = query.where(
-          `filterValue.${column}`,
-          '=',
-          opts.filter.value as never,
-        );
+        query =
+          opts.filter.value === null
+            ? query.where(`filterValue.${column}`, 'is', null)
+            : query.where(
+                `filterValue.${column}`,
+                '=',
+                opts.filter.value as never,
+              );
       }
     }
 
