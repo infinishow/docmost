@@ -1,4 +1,4 @@
-import { IsUUID } from 'class-validator';
+import { Allow, IsUUID } from 'class-validator';
 
 export class UpdatePropertyValueDto {
   @IsUUID()
@@ -7,5 +7,6 @@ export class UpdatePropertyValueDto {
   @IsUUID()
   propertyId: string;
 
+  @Allow()
   value: unknown;
 }

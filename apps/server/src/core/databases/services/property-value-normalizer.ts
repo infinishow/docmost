@@ -65,7 +65,7 @@ export function normalizePropertyValue(input: {
   }
 
   if (input.type === DataSourcePropertyType.Number) {
-    if (typeof input.value !== 'number' || Number.isNaN(input.value)) {
+    if (typeof input.value !== 'number' || !Number.isFinite(input.value)) {
       throw new BadRequestException('Value must be a number');
     }
     return {
@@ -98,8 +98,9 @@ export function normalizePropertyValue(input: {
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('Date start is invalid');
     }
+    const valueJson = normalizeDateValue(input.value);
     return {
-      valueJson: input.value,
+      valueJson,
       textValue: null,
       numberValue: null,
       dateValue: date,
@@ -165,6 +166,35 @@ function isDateValue(
   );
 }
 
+function normalizeDateValue(value: {
+  start: string;
+  end?: string;
+  timeZone?: string;
+}): { start: string; end?: string; timeZone?: string } {
+  const normalized: { start: string; end?: string; timeZone?: string } = {
+    start: value.start,
+  };
+
+  if (value.end !== undefined) {
+    if (typeof value.end !== 'string') {
+      throw new BadRequestException('Date end is invalid');
+    }
+    if (Number.isNaN(new Date(value.end).getTime())) {
+      throw new BadRequestException('Date end is invalid');
+    }
+    normalized.end = value.end;
+  }
+
+  if (value.timeZone !== undefined) {
+    if (typeof value.timeZone !== 'string') {
+      throw new BadRequestException('Date timeZone is invalid');
+    }
+    normalized.timeZone = value.timeZone;
+  }
+
+  return normalized;
+}
+
 function getActiveOption(
   config: Record<string, any> | null | undefined,
   optionId: string,
@@ -173,7 +203,12 @@ function getActiveOption(
     ? (config.options as SelectOption[])
     : [];
   const option = options.find((item) => item.id === optionId);
-  if (!option || option.archived) {
+  if (
+    !option ||
+    option.archived ||
+    typeof option.id !== 'string' ||
+    typeof option.sortKey !== 'string'
+  ) {
     throw new BadRequestException('Select option not found');
   }
   return option;
