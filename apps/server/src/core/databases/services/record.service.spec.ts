@@ -8,6 +8,7 @@ describe('RecordService', () => {
     findActiveById: jest.fn(),
     update: jest.fn(),
     softDelete: jest.fn(),
+    incrementVersion: jest.fn(),
     findActiveByDataSource: jest.fn(),
     findValuesByRecordIds: jest.fn(),
   };
@@ -60,12 +61,65 @@ describe('RecordService', () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
     recordRepo.insert.mockResolvedValue(record);
     propertyRepo.findActiveByDataSource.mockResolvedValue([property]);
+    propertyValueRepo.upsert.mockResolvedValue({
+      id: 'value-1',
+      propertyId: property.id,
+      valueJson: 'x',
+      version: 1,
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+    });
 
-    await service.create({ databaseId, values: { [property.id]: 'x' } }, user);
+    const result = await service.create(
+      { databaseId, values: { [property.id]: 'x' } },
+      user,
+    );
 
     expect(propertyValueRepo.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ recordId: record.id }),
       expect.anything(),
     );
+    expect(recordRepo.incrementVersion).toHaveBeenCalledWith(
+      record.id,
+      expect.anything(),
+    );
+    expect(result).toMatchObject({
+      record: expect.objectContaining({ id: record.id }),
+      values: [
+        expect.objectContaining({
+          propertyId: property.id,
+          value: 'x',
+        }),
+      ],
+    });
+  });
+
+  it('returns queried values keyed by property id', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    recordRepo.findActiveByDataSource.mockResolvedValue({
+      items: [record],
+      meta: { hasNextPage: false },
+    });
+    recordRepo.findValuesByRecordIds.mockResolvedValue([
+      {
+        id: 'value-1',
+        recordId: record.id,
+        propertyId: property.id,
+        valueJson: 'x',
+        version: 1,
+        updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+      },
+    ]);
+
+    const result = await service.query({ databaseId }, user);
+
+    expect(result.items[0].values).toEqual({
+      [property.id]: {
+        id: 'value-1',
+        propertyId: property.id,
+        value: 'x',
+        version: 1,
+        updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+      },
+    });
   });
 });

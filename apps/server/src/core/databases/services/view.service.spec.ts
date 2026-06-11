@@ -11,10 +11,12 @@ describe('ViewService', () => {
     softDelete: jest.fn(),
   };
   const permissionService = { validateWrite: jest.fn() };
+  const db = { transaction: () => ({ execute: (cb: any) => cb('trx') }) };
   const service = new ViewService(
     dataSourceRepo as any,
     viewRepo as any,
     permissionService as any,
+    db as any,
   );
   const user = { id: 'user-1' } as any;
   const dataSource = { id: 'database-1', parentPageId: 'page-1' } as any;
@@ -35,6 +37,23 @@ describe('ViewService', () => {
 
     await expect(service.delete(lastView.id, user)).rejects.toThrow(
       'Cannot delete the last view',
+    );
+  });
+
+  it('deletes views inside a transaction after last-view guard', async () => {
+    viewRepo.findActiveById.mockResolvedValue(lastView);
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    viewRepo.countActiveByDataSource.mockResolvedValue(2);
+
+    await service.delete(lastView.id, user);
+
+    expect(viewRepo.countActiveByDataSource).toHaveBeenCalledWith(
+      dataSource.id,
+      expect.anything(),
+    );
+    expect(viewRepo.softDelete).toHaveBeenCalledWith(
+      lastView.id,
+      expect.anything(),
     );
   });
 });

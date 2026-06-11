@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -36,7 +37,7 @@ export class PropertyService {
       throw new BadRequestException('Title property cannot be created');
     }
     const dataSource = await this.findActiveDataSource(dto.databaseId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     const lastPosition = await this.propertyRepo.findLastPosition(
       dataSource.id,
     );
@@ -57,7 +58,7 @@ export class PropertyService {
   ): Promise<DataSourceProperty> {
     const property = await this.findActiveProperty(dto.propertyId);
     const dataSource = await this.findActiveDataSource(property.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     const updated = await this.propertyRepo.update(property.id, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.config !== undefined ? { configJson: dto.config as any } : {}),
@@ -70,7 +71,7 @@ export class PropertyService {
   async delete(propertyId: string, user: User): Promise<void> {
     const property = await this.findActiveProperty(propertyId);
     const dataSource = await this.findActiveDataSource(property.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     if (property.type === DataSourcePropertyType.Title) {
       throw new BadRequestException('Title property cannot be deleted');
     }
@@ -90,5 +91,16 @@ export class PropertyService {
     const property = await this.propertyRepo.findActiveById(propertyId);
     if (!property) throw new NotFoundException('Property not found');
     return property;
+  }
+
+  private async validateWrite(dataSource: any, user: User): Promise<void> {
+    try {
+      await this.permissionService.validateWrite(dataSource, user);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException('Property not found');
+      }
+      throw err;
+    }
   }
 }

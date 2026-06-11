@@ -1,12 +1,16 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectKysely } from 'nestjs-kysely';
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 import { DataSourceView, User } from '@docmost/db/types/entity.types';
+import { KyselyDB } from '@docmost/db/types/kysely.types';
+import { executeTx } from '@docmost/db/utils';
 import { CreateViewDto, UpdateViewDto } from '../dto/view.dto';
 import { DatabasePermissionService } from './database-permission.service';
 
@@ -16,6 +20,7 @@ export class ViewService {
     private readonly dataSourceRepo: DataSourceRepo,
     private readonly viewRepo: DataSourceViewRepo,
     private readonly permissionService: DatabasePermissionService,
+    @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
   async create(dto: CreateViewDto, user: User): Promise<DataSourceView> {
@@ -23,7 +28,7 @@ export class ViewService {
       throw new BadRequestException('Only table views are supported');
     }
     const dataSource = await this.findActiveDataSource(dto.databaseId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     const lastPosition = await this.viewRepo.findLastPosition(dataSource.id);
     return this.viewRepo.insert({
       dataSourceId: dataSource.id,
@@ -39,7 +44,7 @@ export class ViewService {
   async update(dto: UpdateViewDto, user: User): Promise<DataSourceView> {
     const view = await this.findActiveView(dto.viewId);
     const dataSource = await this.findActiveDataSource(view.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     const updated = await this.viewRepo.update(view.id, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.config !== undefined ? { configJson: dto.config as any } : {}),
@@ -52,12 +57,17 @@ export class ViewService {
   async delete(viewId: string, user: User): Promise<void> {
     const view = await this.findActiveView(viewId);
     const dataSource = await this.findActiveDataSource(view.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
-    const count = await this.viewRepo.countActiveByDataSource(dataSource.id);
-    if (count <= 1) {
-      throw new BadRequestException('Cannot delete the last view');
-    }
-    await this.viewRepo.softDelete(view.id);
+    await this.validateWrite(dataSource, user);
+    await executeTx(this.db, async (trx) => {
+      const count = await this.viewRepo.countActiveByDataSource(
+        dataSource.id,
+        trx,
+      );
+      if (count <= 1) {
+        throw new BadRequestException('Cannot delete the last view');
+      }
+      await this.viewRepo.softDelete(view.id, trx);
+    });
   }
 
   private async findActiveDataSource(databaseId: string) {
@@ -70,5 +80,16 @@ export class ViewService {
     const view = await this.viewRepo.findActiveById(viewId);
     if (!view) throw new NotFoundException('View not found');
     return view;
+  }
+
+  private async validateWrite(dataSource: any, user: User): Promise<void> {
+    try {
+      await this.permissionService.validateWrite(dataSource, user);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException('View not found');
+      }
+      throw err;
+    }
   }
 }

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,10 +12,11 @@ import { DataSourceRecordRepo } from '@docmost/db/repos/data-source/data-source-
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 import {
   DataSourceProperty,
+  DataSourcePropertyValue,
   DataSourceRecord,
   User,
 } from '@docmost/db/types/entity.types';
-import { KyselyDB } from '@docmost/db/types/kysely.types';
+import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
 import { CreateRecordDto, UpdateRecordDto } from '../dto/record.dto';
 import { QueryRecordsDto } from '../dto/query.dto';
@@ -32,9 +34,12 @@ export class RecordService {
     @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
-  async create(dto: CreateRecordDto, user: User): Promise<DataSourceRecord> {
+  async create(
+    dto: CreateRecordDto,
+    user: User,
+  ): Promise<{ record: DataSourceRecord; values: RecordValueResponse[] }> {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     return executeTx(this.db, async (trx) => {
       const lastPosition = await this.recordRepo.findLastPosition(
         dataSource.id,
@@ -49,6 +54,7 @@ export class RecordService {
         },
         trx,
       );
+      const values: DataSourcePropertyValue[] = [];
       if (dto.values) {
         const properties = await this.propertyRepo.findActiveByDataSource(
           dataSource.id,
@@ -60,17 +66,26 @@ export class RecordService {
           if (!property) {
             throw new BadRequestException('Property does not belong to database');
           }
-          await this.upsertValue(record, property, value, user, trx);
+          values.push(await this.upsertValue(record, property, value, user, trx));
+        }
+        if (values.length > 0) {
+          await this.recordRepo.incrementVersion(record.id, trx);
         }
       }
-      return record;
+      return {
+        record:
+          values.length > 0
+            ? { ...record, version: (record.version ?? 1) + 1 }
+            : record,
+        values: values.map(toRecordValueResponse),
+      };
     });
   }
 
   async update(dto: UpdateRecordDto, user: User): Promise<DataSourceRecord> {
     const record = await this.findActiveRecord(dto.recordId);
     const dataSource = await this.findActiveDataSource(record.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     const updated = await this.recordRepo.update(record.id, {
       ...(dto.position !== undefined ? { position: dto.position } : {}),
     });
@@ -81,7 +96,7 @@ export class RecordService {
   async delete(recordId: string, user: User): Promise<void> {
     const record = await this.findActiveRecord(recordId);
     const dataSource = await this.findActiveDataSource(record.dataSourceId);
-    await this.permissionService.validateWrite(dataSource, user);
+    await this.validateWrite(dataSource, user);
     await executeTx(this.db, async (trx) => {
       await this.recordRepo.softDelete(record.id, trx);
       await this.propertyValueRepo.softDeleteByRecordId(record.id, trx);
@@ -90,7 +105,7 @@ export class RecordService {
 
   async query(dto: QueryRecordsDto, user: User) {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
-    await this.permissionService.validateRead(dataSource, user);
+    await this.validateRead(dataSource, user);
     const result = await this.recordRepo.findActiveByDataSource(dataSource.id, {
       limit: dto.limit ?? 50,
       cursor: dto.cursor,
@@ -98,18 +113,18 @@ export class RecordService {
       adminView: false,
     });
     const recordIds = result.items.map((record) => record.id);
-    const values = await this.propertyValueRepoSoftLookup(recordIds);
-    const valuesByRecordId = new Map<string, typeof values>();
+    const values = await this.findValuesByRecordIds(recordIds);
+    const valuesByRecordId = new Map<string, Record<string, RecordValueResponse>>();
     for (const value of values) {
-      const bucket = valuesByRecordId.get(value.recordId) ?? [];
-      bucket.push(value);
+      const bucket = valuesByRecordId.get(value.recordId) ?? {};
+      bucket[value.propertyId] = toRecordValueResponse(value);
       valuesByRecordId.set(value.recordId, bucket);
     }
     return {
       ...result,
       items: result.items.map((record) => ({
         ...record,
-        values: valuesByRecordId.get(record.id) ?? [],
+        values: valuesByRecordId.get(record.id) ?? {},
       })),
     };
   }
@@ -119,14 +134,14 @@ export class RecordService {
     property: DataSourceProperty,
     value: unknown,
     user: User,
-    trx: any,
-  ) {
+    trx: KyselyTransaction,
+  ): Promise<DataSourcePropertyValue> {
     const normalized = normalizePropertyValue({
       type: property.type,
       value,
       config: property.configJson as Record<string, any>,
     });
-    await this.propertyValueRepo.upsert(
+    return this.propertyValueRepo.upsert(
       {
         dataSourceId: record.dataSourceId,
         recordId: record.id,
@@ -139,7 +154,7 @@ export class RecordService {
     );
   }
 
-  private async propertyValueRepoSoftLookup(recordIds: string[]) {
+  private async findValuesByRecordIds(recordIds: string[]) {
     return this.recordRepo.findValuesByRecordIds(recordIds);
   }
 
@@ -154,4 +169,49 @@ export class RecordService {
     if (!record) throw new NotFoundException('Record not found');
     return record;
   }
+
+  private async validateRead(dataSource: any, user: User): Promise<void> {
+    try {
+      await this.permissionService.validateRead(dataSource, user);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException('Record not found');
+      }
+      throw err;
+    }
+  }
+
+  private async validateWrite(dataSource: any, user: User): Promise<void> {
+    try {
+      await this.permissionService.validateWrite(dataSource, user);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException('Record not found');
+      }
+      throw err;
+    }
+  }
+}
+
+type RecordValueResponse = {
+  id: string;
+  propertyId: string;
+  value: unknown;
+  version: number;
+  updatedAt: Date;
+};
+
+function toRecordValueResponse(
+  value: Pick<
+    DataSourcePropertyValue,
+    'id' | 'propertyId' | 'valueJson' | 'version' | 'updatedAt'
+  >,
+): RecordValueResponse {
+  return {
+    id: value.id,
+    propertyId: value.propertyId,
+    value: value.valueJson,
+    version: value.version,
+    updatedAt: value.updatedAt,
+  };
 }
