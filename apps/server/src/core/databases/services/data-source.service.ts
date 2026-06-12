@@ -39,9 +39,10 @@ export class DataSourceService {
     user: User,
     workspace: Workspace,
   ): Promise<{
-    dataSource: DataSource;
-    titleProperty: DataSourceProperty;
-    defaultView: DataSourceView;
+    database: DataSourceResponse;
+    defaultView: DataSourceViewResponse;
+    properties: DataSourcePropertyResponse[];
+    capabilities: DatabaseCapabilities;
   }> {
     const parentPage = await this.pageRepo.findById(dto.parentPageId);
     if (
@@ -97,7 +98,12 @@ export class DataSourceService {
         trx,
       );
 
-      return { dataSource, titleProperty, defaultView };
+      return {
+        database: toDataSourceResponse(dataSource),
+        defaultView: toDataSourceViewResponse(defaultView),
+        properties: [toDataSourcePropertyResponse(titleProperty)],
+        capabilities: writableCapabilities(),
+      };
     });
   }
 
@@ -105,9 +111,10 @@ export class DataSourceService {
     databaseId: string,
     user: User,
   ): Promise<{
-    dataSource: DataSource;
-    properties: DataSourceProperty[];
-    views: DataSourceView[];
+    database: DataSourceResponse;
+    properties: DataSourcePropertyResponse[];
+    views: DataSourceViewResponse[];
+    capabilities: DatabaseCapabilities;
   }> {
     const dataSource = await this.findActiveDataSource(databaseId);
     await this.permissionService.validateRead(dataSource, user);
@@ -115,10 +122,18 @@ export class DataSourceService {
       this.propertyRepo.findActiveByDataSource(dataSource.id),
       this.viewRepo.findActiveByDataSource(dataSource.id),
     ]);
-    return { dataSource, properties, views };
+    return {
+      database: toDataSourceResponse(dataSource),
+      properties: properties.map(toDataSourcePropertyResponse),
+      views: views.map(toDataSourceViewResponse),
+      capabilities: writableCapabilities(),
+    };
   }
 
-  async update(dto: UpdateDataSourceDto, user: User): Promise<DataSource> {
+  async update(
+    dto: UpdateDataSourceDto,
+    user: User,
+  ): Promise<DataSourceResponse> {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
     await this.permissionService.validateWrite(dataSource, user);
     const updated = await this.dataSourceRepo.update(dataSource.id, {
@@ -126,7 +141,7 @@ export class DataSourceService {
       ...(dto.description !== undefined ? { description: dto.description } : {}),
     });
     if (!updated) throw new NotFoundException('Database not found');
-    return updated;
+    return toDataSourceResponse(updated);
   }
 
   async delete(databaseId: string, user: User): Promise<void> {
@@ -140,4 +155,99 @@ export class DataSourceService {
     if (!dataSource) throw new NotFoundException('Database not found');
     return dataSource;
   }
+}
+
+type DataSourceResponse = Pick<
+  DataSource,
+  | 'id'
+  | 'parentPageId'
+  | 'workspaceId'
+  | 'spaceId'
+  | 'name'
+  | 'description'
+  | 'createdById'
+  | 'createdAt'
+  | 'updatedAt'
+>;
+
+type DataSourcePropertyResponse = {
+  id: string;
+  databaseId: string;
+  name: string;
+  type: string;
+  config: unknown;
+  position: string;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type DataSourceViewResponse = {
+  id: string;
+  databaseId: string;
+  name: string;
+  type: string;
+  config: unknown;
+  position: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type DatabaseCapabilities = {
+  canReadData: boolean;
+  canWriteData: boolean;
+  canWriteSchema: boolean;
+  canWriteView: boolean;
+};
+
+function toDataSourceResponse(dataSource: DataSource): DataSourceResponse {
+  return {
+    id: dataSource.id,
+    parentPageId: dataSource.parentPageId,
+    workspaceId: dataSource.workspaceId,
+    spaceId: dataSource.spaceId,
+    name: dataSource.name,
+    description: dataSource.description,
+    createdById: dataSource.createdById,
+    createdAt: dataSource.createdAt,
+    updatedAt: dataSource.updatedAt,
+  };
+}
+
+function toDataSourcePropertyResponse(
+  property: DataSourceProperty,
+): DataSourcePropertyResponse {
+  return {
+    id: property.id,
+    databaseId: property.dataSourceId,
+    name: property.name,
+    type: property.type,
+    config: property.configJson,
+    position: property.position,
+    version: property.version,
+    createdAt: property.createdAt,
+    updatedAt: property.updatedAt,
+  };
+}
+
+function toDataSourceViewResponse(view: DataSourceView): DataSourceViewResponse {
+  return {
+    id: view.id,
+    databaseId: view.dataSourceId,
+    name: view.name,
+    type: view.type,
+    config: view.configJson,
+    position: view.position,
+    createdAt: view.createdAt,
+    updatedAt: view.updatedAt,
+  };
+}
+
+function writableCapabilities(): DatabaseCapabilities {
+  return {
+    canReadData: true,
+    canWriteData: true,
+    canWriteSchema: true,
+    canWriteView: true,
+  };
 }

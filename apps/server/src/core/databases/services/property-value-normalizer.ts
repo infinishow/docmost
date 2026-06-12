@@ -95,7 +95,7 @@ export function normalizePropertyValue(input: {
     if (!isDateValue(input.value)) {
       throw new BadRequestException('Value must be a date object');
     }
-    const date = new Date(input.value.start);
+    const date = parseDate(input.value.start, 'Date start is invalid');
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('Date start is invalid');
     }
@@ -184,32 +184,49 @@ function normalizeDateValue(value: {
   timeZone?: string;
 }): { start: string; end?: string; timeZone?: string } {
   const normalized: { start: string; end?: string; timeZone?: string } = {
-    start: value.start,
+    start: parseDate(value.start, 'Date start is invalid').toISOString(),
   };
 
   if (value.end !== undefined) {
     if (typeof value.end !== 'string') {
       throw new BadRequestException('Date end is invalid');
     }
-    const startDate = new Date(value.start);
-    const endDate = new Date(value.end);
-    if (Number.isNaN(endDate.getTime())) {
-      throw new BadRequestException('Date end is invalid');
-    }
+    const startDate = parseDate(value.start, 'Date start is invalid');
+    const endDate = parseDate(value.end, 'Date end is invalid');
     if (endDate < startDate) {
       throw new BadRequestException('Date end cannot be before start date');
     }
-    normalized.end = value.end;
+    normalized.end = endDate.toISOString();
   }
 
   if (value.timeZone !== undefined) {
-    if (typeof value.timeZone !== 'string') {
+    if (
+      typeof value.timeZone !== 'string' ||
+      !isValidTimeZone(value.timeZone)
+    ) {
       throw new BadRequestException('Date timeZone is invalid');
     }
     normalized.timeZone = value.timeZone;
   }
 
   return normalized;
+}
+
+function parseDate(value: string, errorMessage: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException(errorMessage);
+  }
+  return date;
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getActiveOption(

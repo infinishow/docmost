@@ -31,7 +31,7 @@ export class PropertyService {
   async create(
     dto: CreatePropertyDto,
     user: User,
-  ): Promise<DataSourceProperty> {
+  ): Promise<DataSourcePropertyResponse> {
     if (dto.type === DataSourcePropertyType.Title) {
       throw new BadRequestException('Title property cannot be created');
     }
@@ -40,7 +40,7 @@ export class PropertyService {
     const lastPosition = await this.propertyRepo.findLastPosition(
       dataSource.id,
     );
-    return this.propertyRepo.insert({
+    const property = await this.propertyRepo.insert({
       dataSourceId: dataSource.id,
       name: dto.name,
       type: dto.type,
@@ -50,12 +50,13 @@ export class PropertyService {
         generateJitteredKeyBetween(lastPosition ?? null, null),
       createdById: user.id,
     });
+    return toDataSourcePropertyResponse(property);
   }
 
   async update(
     dto: UpdatePropertyDto,
     user: User,
-  ): Promise<DataSourceProperty> {
+  ): Promise<DataSourcePropertyResponse> {
     const property = await this.findActiveProperty(dto.propertyId);
     const dataSource = await this.findActiveDataSource(property.dataSourceId);
     await this.validateWrite(dataSource, user);
@@ -69,7 +70,7 @@ export class PropertyService {
         : {}),
     });
     if (!updated) throw new NotFoundException('Property not found');
-    return updated;
+    return toDataSourcePropertyResponse(updated);
   }
 
   async delete(propertyId: string, user: User): Promise<void> {
@@ -100,6 +101,34 @@ export class PropertyService {
   private async validateWrite(dataSource: any, user: User): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
+}
+
+type DataSourcePropertyResponse = {
+  id: string;
+  databaseId: string;
+  name: string;
+  type: string;
+  config: unknown;
+  position: string;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function toDataSourcePropertyResponse(
+  property: DataSourceProperty,
+): DataSourcePropertyResponse {
+  return {
+    id: property.id,
+    databaseId: property.dataSourceId,
+    name: property.name,
+    type: property.type,
+    config: property.configJson,
+    position: property.position,
+    version: property.version,
+    createdAt: property.createdAt,
+    updatedAt: property.updatedAt,
+  };
 }
 
 function validatePropertyConfig(

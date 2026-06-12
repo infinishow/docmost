@@ -185,6 +185,50 @@ describe('RecordService', () => {
     });
   });
 
+  it('strips internal sort cursor helper fields from queried records', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([property]);
+    recordRepo.query.mockResolvedValue({
+      items: [
+        {
+          ...record,
+          pageId: null,
+          position: 'a0',
+          version: 1,
+          createdById: user.id,
+          createdAt: new Date('2026-06-11T00:00:00.000Z'),
+          updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+          sort_0_null_rank: 0,
+          sort_0_value: 'alpha',
+        },
+      ],
+      meta: { hasNextPage: false },
+    });
+    recordRepo.findValuesByRecordIds.mockResolvedValue([]);
+
+    const result = await service.query(
+      {
+        databaseId,
+        sort: [{ propertyId: property.id, direction: 'asc' }],
+      },
+      user,
+    );
+
+    expect(result.items[0]).toEqual({
+      id: record.id,
+      databaseId,
+      pageId: null,
+      position: 'a0',
+      version: 1,
+      createdById: user.id,
+      createdAt: new Date('2026-06-11T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+      values: {},
+    });
+    expect(result.items[0]).not.toHaveProperty('sort_0_null_rank');
+    expect(result.items[0]).not.toHaveProperty('sort_0_value');
+  });
+
   it('rejects multi select filters in phase one', async () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
     propertyRepo.findActiveByDataSource.mockResolvedValue([
@@ -295,6 +339,39 @@ describe('RecordService', () => {
     expect(result.items[0].values).toEqual({
       [property.id]: expect.objectContaining({ value: 'x' }),
     });
+  });
+
+  it('enforces filter limits after merging view and request filters', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    viewRepo.findActiveById.mockResolvedValue({
+      id: 'view-1',
+      dataSourceId: databaseId,
+      configJson: {
+        filter: {
+          and: Array.from({ length: 20 }, () => ({
+            propertyId: property.id,
+            operator: 'is_not_empty',
+          })),
+        },
+      },
+    });
+    propertyRepo.findActiveByDataSource.mockResolvedValue([property]);
+
+    await expect(
+      service.query(
+        {
+          databaseId,
+          viewId: 'view-1',
+          filter: {
+            propertyId: property.id,
+            operator: 'is_not_empty',
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Too many filter conditions');
+
+    expect(recordRepo.query).not.toHaveBeenCalled();
   });
 
   it('supports sorted cursor pagination', async () => {

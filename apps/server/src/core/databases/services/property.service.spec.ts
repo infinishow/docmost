@@ -119,6 +119,45 @@ describe('PropertyService', () => {
     expect(propertyRepo.update).not.toHaveBeenCalled();
   });
 
+  it('returns mapped property responses', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.insert.mockResolvedValue({
+      id: property.id,
+      dataSourceId: dataSource.id,
+      name: 'Text',
+      type: 'text',
+      configJson: { width: 180 },
+      position: 'a0',
+      version: 1,
+      createdAt: new Date('2026-06-11T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+      deletedAt: null,
+    });
+
+    const result = await service.create(
+      {
+        databaseId: dataSource.id,
+        name: 'Text',
+        type: 'text',
+      },
+      user,
+    );
+
+    expect(result).toEqual({
+      id: property.id,
+      databaseId: dataSource.id,
+      name: 'Text',
+      type: 'text',
+      config: { width: 180 },
+      position: 'a0',
+      version: 1,
+      createdAt: new Date('2026-06-11T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+    });
+    expect(result).not.toHaveProperty('dataSourceId');
+    expect(result).not.toHaveProperty('configJson');
+  });
+
   it('rejects deleting title properties', async () => {
     propertyRepo.findActiveById.mockResolvedValue(titleProperty);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);

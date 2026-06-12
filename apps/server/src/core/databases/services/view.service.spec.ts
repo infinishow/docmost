@@ -6,6 +6,7 @@ import { ViewService } from './view.service';
 
 describe('ViewService', () => {
   const dataSourceRepo = { findActiveById: jest.fn() };
+  const propertyRepo = { findActiveByDataSource: jest.fn() };
   const viewRepo = {
     findActiveById: jest.fn(),
     findLastPosition: jest.fn(),
@@ -27,6 +28,7 @@ describe('ViewService', () => {
   const db = { transaction: () => ({ execute: (cb: any) => cb(trx) }) };
   const service = new ViewService(
     dataSourceRepo as any,
+    propertyRepo as any,
     viewRepo as any,
     permissionService as any,
     db as any,
@@ -76,6 +78,7 @@ describe('ViewService', () => {
 
   it('rejects invalid client-supplied positions', async () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([]);
 
     await expect(
       service.create(
@@ -94,8 +97,25 @@ describe('ViewService', () => {
 
   it('uses a structured default table view config', async () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([]);
+    viewRepo.insert.mockResolvedValue({
+      id: 'view-1',
+      dataSourceId: dataSource.id,
+      name: 'Table',
+      type: 'table',
+      configJson: {
+        visiblePropertyIds: [],
+        propertyOrder: [],
+        filter: null,
+        sort: [],
+      },
+      position: 'a0',
+      createdAt: new Date('2026-06-11T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+      deletedAt: null,
+    });
 
-    await service.create(
+    const result = await service.create(
       {
         databaseId: dataSource.id,
         name: 'Table',
@@ -114,6 +134,85 @@ describe('ViewService', () => {
         },
       }),
     );
+    expect(result).toEqual({
+      id: 'view-1',
+      databaseId: dataSource.id,
+      name: 'Table',
+      type: 'table',
+      config: {
+        visiblePropertyIds: [],
+        propertyOrder: [],
+        filter: null,
+        sort: [],
+      },
+      position: 'a0',
+      createdAt: new Date('2026-06-11T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-11T00:00:00.000Z'),
+    });
+    expect(result).not.toHaveProperty('dataSourceId');
+    expect(result).not.toHaveProperty('configJson');
+  });
+
+  it('rejects invalid view filter configs before saving', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([
+      {
+        id: 'property-1',
+        type: 'text',
+        configJson: {},
+      },
+    ]);
+
+    await expect(
+      service.create(
+        {
+          databaseId: dataSource.id,
+          name: 'Table',
+          type: 'table',
+          config: {
+            filter: {
+              propertyId: 'missing-property',
+              operator: 'contains',
+              value: 'x',
+            },
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Filter property not found');
+
+    expect(viewRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid view sort configs before saving', async () => {
+    viewRepo.findActiveById.mockResolvedValue(lastView);
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([
+      {
+        id: 'property-1',
+        type: 'text',
+        configJson: {},
+      },
+    ]);
+
+    await expect(
+      service.update(
+        {
+          viewId: lastView.id,
+          config: {
+            sort: [
+              { propertyId: 'property-1' },
+              { propertyId: 'property-1' },
+              { propertyId: 'property-1' },
+              { propertyId: 'property-1' },
+            ],
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Too many sort conditions');
+
+    expect(viewRepo.update).not.toHaveBeenCalled();
   });
 
   it('rejects deleting the last view', async () => {

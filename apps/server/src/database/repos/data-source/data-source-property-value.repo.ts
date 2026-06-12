@@ -38,17 +38,24 @@ export class DataSourcePropertyValueRepo {
       .insertInto('dataSourcePropertyValues')
       .values({ ...data, version: 1 })
       .onConflict((oc) =>
-        oc.columns(['recordId', 'propertyId']).doUpdateSet((eb) => ({
-          valueJson: eb.ref('excluded.valueJson'),
-          textValue: eb.ref('excluded.textValue'),
-          numberValue: eb.ref('excluded.numberValue'),
-          dateValue: eb.ref('excluded.dateValue'),
-          boolValue: eb.ref('excluded.boolValue'),
-          lastEditedById: eb.ref('excluded.lastEditedById'),
-          updatedAt: new Date(),
-          deletedAt: null,
-          version: sql<number>`version + 1`,
-        })),
+        oc
+          .columns(['recordId', 'propertyId'])
+          .doUpdateSet((eb) => ({
+            valueJson: eb.ref('excluded.valueJson'),
+            textValue: eb.ref('excluded.textValue'),
+            numberValue: eb.ref('excluded.numberValue'),
+            dateValue: eb.ref('excluded.dateValue'),
+            boolValue: eb.ref('excluded.boolValue'),
+            lastEditedById: eb.ref('excluded.lastEditedById'),
+            updatedAt: new Date(),
+            deletedAt: null,
+            version: sql<number>`version + 1`,
+          }))
+          .whereRef(
+            'dataSourcePropertyValues.dataSourceId',
+            '=',
+            'excluded.dataSourceId',
+          ),
       )
       .returning(this.fields)
       .executeTakeFirstOrThrow();
@@ -63,17 +70,24 @@ export class DataSourcePropertyValueRepo {
       .insertInto('dataSourcePropertyValues')
       .values(data.map((item) => ({ ...item, version: 1 })))
       .onConflict((oc) =>
-        oc.columns(['recordId', 'propertyId']).doUpdateSet((eb) => ({
-          valueJson: eb.ref('excluded.valueJson'),
-          textValue: eb.ref('excluded.textValue'),
-          numberValue: eb.ref('excluded.numberValue'),
-          dateValue: eb.ref('excluded.dateValue'),
-          boolValue: eb.ref('excluded.boolValue'),
-          lastEditedById: eb.ref('excluded.lastEditedById'),
-          updatedAt: new Date(),
-          deletedAt: null,
-          version: sql<number>`version + 1`,
-        })),
+        oc
+          .columns(['recordId', 'propertyId'])
+          .doUpdateSet((eb) => ({
+            valueJson: eb.ref('excluded.valueJson'),
+            textValue: eb.ref('excluded.textValue'),
+            numberValue: eb.ref('excluded.numberValue'),
+            dateValue: eb.ref('excluded.dateValue'),
+            boolValue: eb.ref('excluded.boolValue'),
+            lastEditedById: eb.ref('excluded.lastEditedById'),
+            updatedAt: new Date(),
+            deletedAt: null,
+            version: sql<number>`version + 1`,
+          }))
+          .whereRef(
+            'dataSourcePropertyValues.dataSourceId',
+            '=',
+            'excluded.dataSourceId',
+          ),
       )
       .returning(this.fields)
       .execute();

@@ -135,6 +135,36 @@ describe('normalizePropertyValue', () => {
     });
   });
 
+  it('canonicalizes timezone-less date strings to UTC ISO strings', () => {
+    const normalized = normalizePropertyValue({
+      type: DataSourcePropertyType.Date,
+      value: {
+        start: '2026-06-11',
+        end: '2026-06-12',
+      },
+    });
+
+    expect(normalized.valueJson).toEqual({
+      start: '2026-06-11T00:00:00.000Z',
+      end: '2026-06-12T00:00:00.000Z',
+    });
+    expect(normalized.dateValue).toEqual(
+      new Date('2026-06-11T00:00:00.000Z'),
+    );
+  });
+
+  it('rejects invalid date time zones', () => {
+    expect(() =>
+      normalizePropertyValue({
+        type: DataSourcePropertyType.Date,
+        value: {
+          start: '2026-06-11T00:00:00.000Z',
+          timeZone: 'Invalid/Zone',
+        },
+      }),
+    ).toThrow('Date timeZone is invalid');
+  });
+
   it('rejects malformed date optional fields', () => {
     expect(() =>
       normalizePropertyValue({

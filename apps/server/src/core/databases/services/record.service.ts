@@ -176,10 +176,9 @@ export class RecordService {
     }
     return {
       ...result,
-      items: result.items.map((record) => ({
-        ...record,
-        values: valuesByRecordId.get(record.id) ?? {},
-      })),
+      items: result.items.map((record) =>
+        toRecordResponse(record, valuesByRecordId.get(record.id) ?? {}),
+      ),
     };
   }
 
@@ -225,6 +224,9 @@ export class RecordService {
       viewFilter && requestFilter
         ? ({ and: [viewFilter, requestFilter] } as DataSourceRecordQueryFilter)
         : (requestFilter ?? viewFilter);
+    if (filter) {
+      this.validateFilterLimits(filter, 1, { value: 0 });
+    }
     const sort = this.buildSort(dto.sort ?? viewConfig?.sort, propertyById);
     return {
       ...(filter ? { filter } : {}),
@@ -242,6 +244,25 @@ export class RecordService {
     if (filter === undefined || filter === null) return undefined;
     const leafCount = { value: 0 };
     return this.buildFilterNode(filter, propertyById, 1, leafCount);
+  }
+
+  private validateFilterLimits(
+    filter: DataSourceRecordQueryFilter,
+    depth: number,
+    leafCount: { value: number },
+  ): void {
+    if (depth > 3) throw new BadRequestException('Filter is too deeply nested');
+    if ('and' in filter || 'or' in filter) {
+      const children = 'and' in filter ? filter.and : filter.or;
+      for (const child of children) {
+        this.validateFilterLimits(child, depth + 1, leafCount);
+      }
+      return;
+    }
+    leafCount.value += 1;
+    if (leafCount.value > 20) {
+      throw new BadRequestException('Too many filter conditions');
+    }
   }
 
   private buildFilterNode(
@@ -502,6 +523,18 @@ type RecordValueResponse = {
   updatedAt: Date;
 };
 
+type RecordResponse = {
+  id: string;
+  databaseId: string;
+  pageId: string | null;
+  position: string;
+  version: number;
+  createdById: string;
+  createdAt: Date;
+  updatedAt: Date;
+  values: Record<string, RecordValueResponse>;
+};
+
 type ViewQueryConfig = {
   filter?: unknown;
   sort?: unknown;
@@ -527,5 +560,22 @@ function toRecordValueResponse(
     value: value.valueJson,
     version: value.version,
     updatedAt: value.updatedAt,
+  };
+}
+
+function toRecordResponse(
+  record: DataSourceRecord,
+  values: Record<string, RecordValueResponse>,
+): RecordResponse {
+  return {
+    id: record.id,
+    databaseId: record.dataSourceId,
+    pageId: record.pageId,
+    position: record.position,
+    version: record.version,
+    createdById: record.createdById,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    values,
   };
 }
