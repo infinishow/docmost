@@ -59,20 +59,19 @@ describe('ViewService', () => {
     });
 
     await expect(validate(createDto)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ property: 'config' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ property: 'config' })]),
     );
     await expect(validate(updateDto)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ property: 'config' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ property: 'config' })]),
     );
   });
 
   it('rejects non-table views', async () => {
     await expect(
-      service.create({ databaseId: dataSource.id, name: 'Board', type: 'board' } as any, user),
+      service.create(
+        { databaseId: dataSource.id, name: 'Board', type: 'board' } as any,
+        user,
+      ),
     ).rejects.toThrow('Only table views are supported');
   });
 
@@ -180,6 +179,37 @@ describe('ViewService', () => {
         user,
       ),
     ).rejects.toThrow('Filter property not found');
+
+    expect(viewRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects contains view filters with non-string values before saving', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([
+      {
+        id: 'property-1',
+        type: 'text',
+        configJson: {},
+      },
+    ]);
+
+    await expect(
+      service.create(
+        {
+          databaseId: dataSource.id,
+          name: 'Table',
+          type: 'table',
+          config: {
+            filter: {
+              propertyId: 'property-1',
+              operator: 'contains',
+              value: null,
+            },
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Filter value must be a string');
 
     expect(viewRepo.insert).not.toHaveBeenCalled();
   });

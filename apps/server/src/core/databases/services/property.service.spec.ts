@@ -13,12 +13,17 @@ describe('PropertyService', () => {
     update: jest.fn(),
     softDelete: jest.fn(),
   };
+  const viewRepo = {
+    findActiveByDataSource: jest.fn(),
+    update: jest.fn(),
+  };
   const propertyValueRepo = { softDeleteByPropertyId: jest.fn() };
   const permissionService = { validateWrite: jest.fn() };
   const db = { transaction: () => ({ execute: (cb: any) => cb('trx') }) };
   const service = new PropertyService(
     dataSourceRepo as any,
     propertyRepo as any,
+    viewRepo as any,
     propertyValueRepo as any,
     permissionService as any,
     db as any,
@@ -47,14 +52,10 @@ describe('PropertyService', () => {
     });
 
     await expect(validate(createDto)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ property: 'config' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ property: 'config' })]),
     );
     await expect(validate(updateDto)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ property: 'config' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ property: 'config' })]),
     );
   });
 
@@ -170,6 +171,7 @@ describe('PropertyService', () => {
   it('soft deletes property values when deleting a property', async () => {
     propertyRepo.findActiveById.mockResolvedValue(property);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    viewRepo.findActiveByDataSource.mockResolvedValue([]);
 
     await service.delete(property.id, user);
 
@@ -179,9 +181,53 @@ describe('PropertyService', () => {
     );
   });
 
+  it('removes deleted property references from active view configs', async () => {
+    propertyRepo.findActiveById.mockResolvedValue(property);
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    viewRepo.findActiveByDataSource.mockResolvedValue([
+      {
+        id: 'view-1',
+        configJson: {
+          visiblePropertyIds: [property.id, 'property-2'],
+          propertyOrder: [property.id, 'property-2'],
+          filter: {
+            and: [
+              { propertyId: property.id, operator: 'contains', value: 'x' },
+              { propertyId: 'property-2', operator: 'contains', value: 'y' },
+            ],
+          },
+          sort: [
+            { propertyId: property.id, direction: 'asc' },
+            { propertyId: 'property-2', direction: 'desc' },
+          ],
+        },
+      },
+    ]);
+
+    await service.delete(property.id, user);
+
+    expect(viewRepo.update).toHaveBeenCalledWith(
+      'view-1',
+      {
+        configJson: {
+          visiblePropertyIds: ['property-2'],
+          propertyOrder: ['property-2'],
+          filter: {
+            propertyId: 'property-2',
+            operator: 'contains',
+            value: 'y',
+          },
+          sort: [{ propertyId: 'property-2', direction: 'desc' }],
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it('preserves forbidden write failures instead of hiding them as not found', async () => {
     propertyRepo.findActiveById.mockResolvedValue(property);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    viewRepo.findActiveByDataSource.mockResolvedValue([]);
     permissionService.validateWrite.mockRejectedValue(new ForbiddenException());
 
     await expect(service.delete(property.id, user)).rejects.toBeInstanceOf(

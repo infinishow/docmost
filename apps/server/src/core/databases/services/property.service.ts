@@ -8,12 +8,13 @@ import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-source-property.repo';
 import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
+import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 import {
   DataSource,
   DataSourceProperty,
   User,
 } from '@docmost/db/types/entity.types';
-import { KyselyDB } from '@docmost/db/types/kysely.types';
+import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
 import { CreatePropertyDto, UpdatePropertyDto } from '../dto/property.dto';
 import { DatabasePermissionService } from './database-permission.service';
@@ -24,6 +25,7 @@ export class PropertyService {
   constructor(
     private readonly dataSourceRepo: DataSourceRepo,
     private readonly propertyRepo: DataSourcePropertyRepo,
+    private readonly viewRepo: DataSourceViewRepo,
     private readonly propertyValueRepo: DataSourcePropertyValueRepo,
     private readonly permissionService: DatabasePermissionService,
     @InjectKysely() private readonly db: KyselyDB,
@@ -84,7 +86,30 @@ export class PropertyService {
     await executeTx(this.db, async (trx) => {
       await this.propertyRepo.softDelete(property.id, trx);
       await this.propertyValueRepo.softDeleteByPropertyId(property.id, trx);
+      await this.removePropertyFromViewConfigs(
+        property.dataSourceId,
+        property.id,
+        trx,
+      );
     });
+  }
+
+  private async removePropertyFromViewConfigs(
+    dataSourceId: string,
+    propertyId: string,
+    trx: KyselyTransaction,
+  ): Promise<void> {
+    const views = await this.viewRepo.findActiveByDataSource(dataSourceId, trx);
+    for (const view of views) {
+      const sanitized = removePropertyReferences(view.configJson, propertyId);
+      if (sanitized.changed) {
+        await this.viewRepo.update(
+          view.id,
+          { configJson: sanitized.config },
+          trx,
+        );
+      }
+    }
   }
 
   private async findActiveDataSource(databaseId: string) {
@@ -170,6 +195,98 @@ function validatePropertyConfig(
   }
 
   return normalized;
+}
+
+function removePropertyReferences(
+  config: unknown,
+  propertyId: string,
+): { config: Record<string, any>; changed: boolean } {
+  const input = isConfigRecord(config) ? config : {};
+  const next: Record<string, any> = { ...input };
+  let changed = false;
+
+  if (Array.isArray(input.visiblePropertyIds)) {
+    next.visiblePropertyIds = input.visiblePropertyIds.filter(
+      (id) => id !== propertyId,
+    );
+    changed ||=
+      next.visiblePropertyIds.length !== input.visiblePropertyIds.length;
+  }
+
+  if (Array.isArray(input.propertyOrder)) {
+    next.propertyOrder = input.propertyOrder.filter((id) => id !== propertyId);
+    changed ||= next.propertyOrder.length !== input.propertyOrder.length;
+  }
+
+  const filterResult = removePropertyFromFilter(input.filter, propertyId);
+  if (filterResult.changed) {
+    next.filter = filterResult.filter ?? null;
+    changed = true;
+  }
+
+  const sortResult = removePropertyFromSort(input.sort, propertyId);
+  if (sortResult.changed) {
+    next.sort = sortResult.sort;
+    changed = true;
+  }
+
+  return { config: next, changed };
+}
+
+function removePropertyFromFilter(
+  filter: unknown,
+  propertyId: string,
+): { filter?: unknown; changed: boolean } {
+  if (!isConfigRecord(filter)) return { filter, changed: false };
+
+  if (Array.isArray(filter.and) || Array.isArray(filter.or)) {
+    const key = Array.isArray(filter.and) ? 'and' : 'or';
+    const children = filter[key] as unknown[];
+    let changed = false;
+    const nextChildren: unknown[] = [];
+
+    for (const child of children) {
+      const result = removePropertyFromFilter(child, propertyId);
+      changed ||= result.changed;
+      if (result.filter !== undefined) {
+        nextChildren.push(result.filter);
+      }
+    }
+
+    if (nextChildren.length !== children.length) changed = true;
+    if (!changed) return { filter, changed: false };
+    if (nextChildren.length === 0) return { filter: undefined, changed: true };
+    if (nextChildren.length === 1) {
+      return { filter: nextChildren[0], changed: true };
+    }
+    return { filter: { ...filter, [key]: nextChildren }, changed: true };
+  }
+
+  if (filter.propertyId === propertyId) {
+    return { filter: undefined, changed: true };
+  }
+  return { filter, changed: false };
+}
+
+function removePropertyFromSort(
+  sort: unknown,
+  propertyId: string,
+): { sort: unknown; changed: boolean } {
+  if (Array.isArray(sort)) {
+    const next = sort.filter(
+      (item) => !isConfigRecord(item) || item.propertyId !== propertyId,
+    );
+    return {
+      sort: next,
+      changed: next.length !== sort.length,
+    };
+  }
+
+  if (isConfigRecord(sort) && sort.propertyId === propertyId) {
+    return { sort: [], changed: true };
+  }
+
+  return { sort, changed: false };
 }
 
 function isConfigRecord(value: unknown): value is Record<string, any> {

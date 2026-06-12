@@ -242,6 +242,9 @@ function validateFilterNode(
   if (!isSupportedFilterOperator(property.type, operator)) {
     throw new BadRequestException('Unsupported filter operator');
   }
+  if (operator === 'contains' && typeof value !== 'string') {
+    throw new BadRequestException('Filter value must be a string');
+  }
   if (operator !== 'is_empty' && operator !== 'is_not_empty') {
     normalizePropertyValue({
       type: property.type,
