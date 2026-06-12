@@ -18,6 +18,7 @@ import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import {
+  DataSource,
   DataSourceProperty,
   DataSourcePropertyValue,
   DataSourceRecord,
@@ -164,10 +165,7 @@ export class RecordService {
       Record<string, RecordValueResponse>
     >();
     for (const value of values) {
-      if (
-        visiblePropertyIds &&
-        !visiblePropertyIds.has(value.propertyId)
-      ) {
+      if (visiblePropertyIds && !visiblePropertyIds.has(value.propertyId)) {
         continue;
       }
       const bucket = valuesByRecordId.get(value.recordId) ?? {};
@@ -391,11 +389,17 @@ export class RecordService {
     };
   }
 
-  private async validateRead(dataSource: any, user: User): Promise<void> {
+  private async validateRead(
+    dataSource: DataSource,
+    user: User,
+  ): Promise<void> {
     await this.permissionService.validateRead(dataSource, user);
   }
 
-  private async validateWrite(dataSource: any, user: User): Promise<void> {
+  private async validateWrite(
+    dataSource: DataSource,
+    user: User,
+  ): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
 

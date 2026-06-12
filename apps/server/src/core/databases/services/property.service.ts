@@ -8,13 +8,14 @@ import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-source-property.repo';
 import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
-import { DataSourceProperty, User } from '@docmost/db/types/entity.types';
+import {
+  DataSource,
+  DataSourceProperty,
+  User,
+} from '@docmost/db/types/entity.types';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
-import {
-  CreatePropertyDto,
-  UpdatePropertyDto,
-} from '../dto/property.dto';
+import { CreatePropertyDto, UpdatePropertyDto } from '../dto/property.dto';
 import { DatabasePermissionService } from './database-permission.service';
 import { DataSourcePropertyType } from './property-value-normalizer';
 
@@ -98,7 +99,10 @@ export class PropertyService {
     return property;
   }
 
-  private async validateWrite(dataSource: any, user: User): Promise<void> {
+  private async validateWrite(
+    dataSource: DataSource,
+    user: User,
+  ): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
 }

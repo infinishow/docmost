@@ -9,6 +9,7 @@ import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-sourc
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 import {
+  DataSource,
   DataSourceProperty,
   DataSourceView,
   User,
@@ -32,7 +33,10 @@ export class ViewService {
     @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
-  async create(dto: CreateViewDto, user: User): Promise<DataSourceViewResponse> {
+  async create(
+    dto: CreateViewDto,
+    user: User,
+  ): Promise<DataSourceViewResponse> {
     if (dto.type !== 'table') {
       throw new BadRequestException('Only table views are supported');
     }
@@ -55,7 +59,10 @@ export class ViewService {
     return toDataSourceViewResponse(view);
   }
 
-  async update(dto: UpdateViewDto, user: User): Promise<DataSourceViewResponse> {
+  async update(
+    dto: UpdateViewDto,
+    user: User,
+  ): Promise<DataSourceViewResponse> {
     const view = await this.findActiveView(dto.viewId);
     const dataSource = await this.findActiveDataSource(view.dataSourceId);
     await this.validateWrite(dataSource, user);
@@ -110,7 +117,10 @@ export class ViewService {
     return view;
   }
 
-  private async validateWrite(dataSource: any, user: User): Promise<void> {
+  private async validateWrite(
+    dataSource: DataSource,
+    user: User,
+  ): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
 }
@@ -126,7 +136,9 @@ type DataSourceViewResponse = {
   updatedAt: Date;
 };
 
-function toDataSourceViewResponse(view: DataSourceView): DataSourceViewResponse {
+function toDataSourceViewResponse(
+  view: DataSourceView,
+): DataSourceViewResponse {
   return {
     id: view.id,
     databaseId: view.dataSourceId,
@@ -147,7 +159,9 @@ function normalizeViewConfig(
     typeof config === 'object' && config !== null && !Array.isArray(config)
       ? (config as Record<string, any>)
       : {};
-  const propertyById = new Map(properties.map((property) => [property.id, property]));
+  const propertyById = new Map(
+    properties.map((property) => [property.id, property]),
+  );
   validatePropertyIdList(input.visiblePropertyIds, propertyById);
   validatePropertyIdList(input.propertyOrder, propertyById);
   validateFilter(input.filter, propertyById);
