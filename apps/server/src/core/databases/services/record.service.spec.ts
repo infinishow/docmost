@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { CreateRecordDto } from '../dto/record.dto';
 import { QueryRecordsDto } from '../dto/query.dto';
 import { DataSourcePropertyType } from './property-value-normalizer';
 import { RecordService } from './record.service';
@@ -27,6 +29,7 @@ describe('RecordService', () => {
     validateWrite: jest.fn(),
     validateRead: jest.fn(),
   };
+  const userRepo = { findById: jest.fn() };
   const db = { transaction: () => ({ execute: (cb: any) => cb('trx') }) };
   const service = new RecordService(
     dataSourceRepo as any,
@@ -34,9 +37,10 @@ describe('RecordService', () => {
     propertyRepo as any,
     propertyValueRepo as any,
     permissionService as any,
+    userRepo as any,
     db as any,
   );
-  const user = { id: 'user-1' } as any;
+  const user = { id: 'user-1', workspaceId: 'workspace-1' } as any;
   const databaseId = 'database-1';
   const dataSource = { id: databaseId, parentPageId: 'page-1' } as any;
   const record = { id: 'record-1', dataSourceId: databaseId } as any;
@@ -59,6 +63,21 @@ describe('RecordService', () => {
     configJson: {
       options: [{ id: 'todo', name: 'Todo', sortKey: '001' }],
     },
+  } as any;
+  const archivedSelectProperty = {
+    ...selectProperty,
+    id: 'property-archived-select',
+    configJson: {
+      options: [
+        { id: 'old', name: 'Old', sortKey: '999', archived: true },
+      ],
+    },
+  } as any;
+  const personProperty = {
+    id: 'property-person',
+    dataSourceId: databaseId,
+    type: DataSourcePropertyType.Person,
+    configJson: {},
   } as any;
   const foreignPropertyId = 'foreign-property';
 
@@ -234,6 +253,82 @@ describe('RecordService', () => {
     });
   });
 
+  it('allows archived select options when normalizing equals filters', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([
+      archivedSelectProperty,
+    ]);
+    recordRepo.query.mockResolvedValue({
+      items: [],
+      meta: { hasNextPage: false },
+    });
+    recordRepo.findValuesByRecordIds.mockResolvedValue([]);
+
+    await service.query(
+      {
+        databaseId,
+        filter: {
+          propertyId: archivedSelectProperty.id,
+          operator: 'equals',
+          value: 'old',
+        },
+      },
+      user,
+    );
+
+    expect(recordRepo.query).toHaveBeenCalledWith({
+      databaseId,
+      cursor: undefined,
+      limit: 50,
+      filter: {
+        propertyId: archivedSelectProperty.id,
+        type: DataSourcePropertyType.Select,
+        operator: 'equals',
+        value: '999',
+      },
+    });
+  });
+
+  it('rejects invalid client-supplied positions', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.create({ databaseId, position: 'invalid' }, user),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(recordRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('validates person values against workspace users before saving', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    recordRepo.insert.mockResolvedValue(record);
+    propertyRepo.findActiveByDataSource.mockResolvedValue([personProperty]);
+    userRepo.findById.mockResolvedValueOnce(null);
+
+    await expect(
+      service.create(
+        { databaseId, values: { [personProperty.id]: ['other-user'] } },
+        user,
+      ),
+    ).rejects.toThrow('User not found');
+
+    expect(userRepo.findById).toHaveBeenCalledWith(
+      'other-user',
+      user.workspaceId,
+      expect.anything(),
+    );
+    expect(propertyValueRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('preserves forbidden write failures instead of hiding them as not found', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    permissionService.validateWrite.mockRejectedValue(new ForbiddenException());
+
+    await expect(service.create({ databaseId }, user)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
   it('caps query limit at 100 through DTO validation', async () => {
     const dto = plainToInstance(QueryRecordsDto, {
       databaseId: '00000000-0000-4000-8000-000000000001',
@@ -244,5 +339,17 @@ describe('RecordService', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0].property).toBe('limit');
+  });
+
+  it('requires record values to be an object when present', async () => {
+    const dto = plainToInstance(CreateRecordDto, {
+      databaseId: '00000000-0000-4000-8000-000000000001',
+      values: ['not', 'an', 'object'],
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].property).toBe('values');
   });
 });

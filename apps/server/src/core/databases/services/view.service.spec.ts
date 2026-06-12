@@ -1,3 +1,4 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ViewService } from './view.service';
 
 describe('ViewService', () => {
@@ -46,6 +47,24 @@ describe('ViewService', () => {
     ).rejects.toThrow('Only table views are supported');
   });
 
+  it('rejects invalid client-supplied positions', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.create(
+        {
+          databaseId: dataSource.id,
+          name: 'Table',
+          type: 'table',
+          position: 'invalid',
+        },
+        user,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(viewRepo.insert).not.toHaveBeenCalled();
+  });
+
   it('rejects deleting the last view', async () => {
     viewRepo.findActiveById.mockResolvedValue(lastView);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
@@ -87,6 +106,16 @@ describe('ViewService', () => {
     expect(lockQuery.executeTakeFirst).toHaveBeenCalled();
     expect(lockQuery.executeTakeFirst.mock.invocationCallOrder[0]).toBeLessThan(
       viewRepo.countActiveByDataSource.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('preserves forbidden write failures instead of hiding them as not found', async () => {
+    viewRepo.findActiveById.mockResolvedValue(lastView);
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    permissionService.validateWrite.mockRejectedValue(new ForbiddenException());
+
+    await expect(service.delete(lastView.id, user)).rejects.toBeInstanceOf(
+      ForbiddenException,
     );
   });
 });

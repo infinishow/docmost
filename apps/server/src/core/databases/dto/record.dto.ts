@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateRecordDto {
   @IsUUID()
@@ -9,6 +9,7 @@ export class CreateRecordDto {
   position?: string;
 
   @IsOptional()
+  @IsObject()
   values?: Record<string, unknown>;
 }
 

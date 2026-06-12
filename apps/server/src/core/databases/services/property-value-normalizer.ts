@@ -38,6 +38,7 @@ export function normalizePropertyValue(input: {
   type: string;
   value: unknown;
   config?: Record<string, any> | null;
+  allowArchivedSelectOptions?: boolean;
 }): NormalizedPropertyValue {
   const empty = {
     textValue: null,
@@ -112,7 +113,11 @@ export function normalizePropertyValue(input: {
     if (typeof input.value !== 'string') {
       throw new BadRequestException('Value must be an option id');
     }
-    const option = getActiveOption(input.config, input.value);
+    const option = getActiveOption(
+      input.config,
+      input.value,
+      input.allowArchivedSelectOptions,
+    );
     return {
       valueJson: input.value,
       textValue: option.sortKey,
@@ -129,7 +134,9 @@ export function normalizePropertyValue(input: {
     ) {
       throw new BadRequestException('Value must be option ids');
     }
-    for (const value of input.value) getActiveOption(input.config, value);
+    for (const value of input.value) {
+      getActiveOption(input.config, value, input.allowArchivedSelectOptions);
+    }
     return { valueJson: input.value, ...empty };
   }
 
@@ -179,8 +186,13 @@ function normalizeDateValue(value: {
     if (typeof value.end !== 'string') {
       throw new BadRequestException('Date end is invalid');
     }
-    if (Number.isNaN(new Date(value.end).getTime())) {
+    const startDate = new Date(value.start);
+    const endDate = new Date(value.end);
+    if (Number.isNaN(endDate.getTime())) {
       throw new BadRequestException('Date end is invalid');
+    }
+    if (endDate < startDate) {
+      throw new BadRequestException('Date end cannot be before start date');
     }
     normalized.end = value.end;
   }
@@ -198,6 +210,7 @@ function normalizeDateValue(value: {
 function getActiveOption(
   config: Record<string, any> | null | undefined,
   optionId: string,
+  allowArchived = false,
 ): SelectOption {
   const options = Array.isArray(config?.options)
     ? (config.options as SelectOption[])
@@ -205,7 +218,7 @@ function getActiveOption(
   const option = options.find((item) => item.id === optionId);
   if (
     !option ||
-    option.archived ||
+    (!allowArchived && option.archived) ||
     typeof option.id !== 'string' ||
     typeof option.sortKey !== 'string'
   ) {

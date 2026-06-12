@@ -153,4 +153,32 @@ describe('DataSourceRecordRepo.query', () => {
       }),
     );
   });
+
+  it('compares date equals filters by calendar date instead of exact timestamp', async () => {
+    await repo.query({
+      databaseId: 'database-1',
+      limit: 50,
+      filter: {
+        propertyId: 'property-1',
+        type: 'date',
+        operator: 'equals',
+        value: new Date('2026-06-11T15:30:00.000Z'),
+      },
+    });
+
+    const dateWhere = builder.ops.find(
+      ([op, left]) =>
+        op === 'where' &&
+        typeof left?.toOperationNode === 'function' &&
+        left.toOperationNode().sqlFragments?.some((fragment: string) =>
+          fragment.includes('cast('),
+        ),
+    );
+    expect(dateWhere).toBeDefined();
+    expect(dateWhere[2]).toBe('=');
+    expect(dateWhere[3].toOperationNode().sqlFragments).toEqual([
+      'cast(',
+      ' as date)',
+    ]);
+  });
 });

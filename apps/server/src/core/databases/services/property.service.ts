@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -47,7 +46,8 @@ export class PropertyService {
       type: dto.type,
       configJson: (dto.config ?? {}) as any,
       position:
-        dto.position ?? generateJitteredKeyBetween(lastPosition ?? null, null),
+        validatePosition(dto.position) ??
+        generateJitteredKeyBetween(lastPosition ?? null, null),
       createdById: user.id,
     });
   }
@@ -62,7 +62,9 @@ export class PropertyService {
     const updated = await this.propertyRepo.update(property.id, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.config !== undefined ? { configJson: dto.config as any } : {}),
-      ...(dto.position !== undefined ? { position: dto.position } : {}),
+      ...(dto.position !== undefined
+        ? { position: validatePosition(dto.position) }
+        : {}),
     });
     if (!updated) throw new NotFoundException('Property not found');
     return updated;
@@ -94,13 +96,16 @@ export class PropertyService {
   }
 
   private async validateWrite(dataSource: any, user: User): Promise<void> {
-    try {
-      await this.permissionService.validateWrite(dataSource, user);
-    } catch (err) {
-      if (err instanceof ForbiddenException) {
-        throw new NotFoundException('Property not found');
-      }
-      throw err;
-    }
+    await this.permissionService.validateWrite(dataSource, user);
+  }
+}
+
+function validatePosition(position: string | undefined): string | undefined {
+  if (position === undefined) return undefined;
+  try {
+    generateJitteredKeyBetween(position, null);
+    return position;
+  } catch {
+    throw new BadRequestException('Invalid position');
   }
 }

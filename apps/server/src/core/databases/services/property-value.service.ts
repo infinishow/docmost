@@ -1,5 +1,5 @@
 import {
-  ForbiddenException,
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,16 +8,21 @@ import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-sourc
 import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
 import { DataSourceRecordRepo } from '@docmost/db/repos/data-source/data-source-record.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
+import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import {
   DataSource,
+  DataSourceProperty,
   DataSourcePropertyValue,
   User,
 } from '@docmost/db/types/entity.types';
-import { KyselyDB } from '@docmost/db/types/kysely.types';
+import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
 import { UpdatePropertyValueDto } from '../dto/property-value.dto';
 import { DatabasePermissionService } from './database-permission.service';
-import { normalizePropertyValue } from './property-value-normalizer';
+import {
+  DataSourcePropertyType,
+  normalizePropertyValue,
+} from './property-value-normalizer';
 
 @Injectable()
 export class PropertyValueService {
@@ -27,6 +32,7 @@ export class PropertyValueService {
     private readonly propertyRepo: DataSourcePropertyRepo,
     private readonly propertyValueRepo: DataSourcePropertyValueRepo,
     private readonly permissionService: DatabasePermissionService,
+    private readonly userRepo: UserRepo,
     @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
@@ -52,6 +58,7 @@ export class PropertyValueService {
       config: property.configJson as Record<string, any>,
     });
     return executeTx(this.db, async (trx) => {
+      await this.validatePersonUsers(property, normalized.valueJson, user, trx);
       const value = await this.propertyValueRepo.upsert(
         {
           dataSourceId: record.dataSourceId,
@@ -69,13 +76,25 @@ export class PropertyValueService {
   }
 
   private async validateWrite(dataSource: DataSource, user: User): Promise<void> {
-    try {
-      await this.permissionService.validateWrite(dataSource, user);
-    } catch (err) {
-      if (err instanceof ForbiddenException) {
-        throw new NotFoundException('Value not found');
-      }
-      throw err;
+    await this.permissionService.validateWrite(dataSource, user);
+  }
+
+  private async validatePersonUsers(
+    property: DataSourceProperty,
+    value: unknown,
+    user: User,
+    trx: KyselyTransaction,
+  ): Promise<void> {
+    if (property.type !== DataSourcePropertyType.Person || value === null) {
+      return;
+    }
+    for (const userId of value as string[]) {
+      const workspaceUser = await this.userRepo.findById(
+        userId,
+        user.workspaceId,
+        { trx },
+      );
+      if (!workspaceUser) throw new BadRequestException('User not found');
     }
   }
 }

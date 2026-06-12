@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,6 +14,7 @@ import {
   DataSourceRecordRepo,
 } from '@docmost/db/repos/data-source/data-source-record.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
+import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import {
   DataSourceProperty,
   DataSourcePropertyValue,
@@ -39,6 +39,7 @@ export class RecordService {
     private readonly propertyRepo: DataSourcePropertyRepo,
     private readonly propertyValueRepo: DataSourcePropertyValueRepo,
     private readonly permissionService: DatabasePermissionService,
+    private readonly userRepo: UserRepo,
     @InjectKysely() private readonly db: KyselyDB,
   ) {}
 
@@ -57,7 +58,7 @@ export class RecordService {
         {
           dataSourceId: dataSource.id,
           position:
-            dto.position ??
+            validatePosition(dto.position) ??
             generateJitteredKeyBetween(lastPosition ?? null, null),
           createdById: user.id,
         },
@@ -100,7 +101,9 @@ export class RecordService {
     const dataSource = await this.findActiveDataSource(record.dataSourceId);
     await this.validateWrite(dataSource, user);
     const updated = await this.recordRepo.update(record.id, {
-      ...(dto.position !== undefined ? { position: dto.position } : {}),
+      ...(dto.position !== undefined
+        ? { position: validatePosition(dto.position) }
+        : {}),
     });
     if (!updated) throw new NotFoundException('Record not found');
     return updated;
@@ -166,6 +169,7 @@ export class RecordService {
       value,
       config: property.configJson as Record<string, any>,
     });
+    await this.validatePersonUsers(property, normalized.valueJson, user, trx);
     return this.propertyValueRepo.upsert(
       {
         dataSourceId: record.dataSourceId,
@@ -277,24 +281,29 @@ export class RecordService {
   }
 
   private async validateRead(dataSource: any, user: User): Promise<void> {
-    try {
-      await this.permissionService.validateRead(dataSource, user);
-    } catch (err) {
-      if (err instanceof ForbiddenException) {
-        throw new NotFoundException('Record not found');
-      }
-      throw err;
-    }
+    await this.permissionService.validateRead(dataSource, user);
   }
 
   private async validateWrite(dataSource: any, user: User): Promise<void> {
-    try {
-      await this.permissionService.validateWrite(dataSource, user);
-    } catch (err) {
-      if (err instanceof ForbiddenException) {
-        throw new NotFoundException('Record not found');
-      }
-      throw err;
+    await this.permissionService.validateWrite(dataSource, user);
+  }
+
+  private async validatePersonUsers(
+    property: DataSourceProperty,
+    value: unknown,
+    user: User,
+    trx: KyselyTransaction,
+  ): Promise<void> {
+    if (property.type !== DataSourcePropertyType.Person || value === null) {
+      return;
+    }
+    for (const userId of value as string[]) {
+      const workspaceUser = await this.userRepo.findById(
+        userId,
+        user.workspaceId,
+        { trx },
+      );
+      if (!workspaceUser) throw new BadRequestException('User not found');
     }
   }
 }
@@ -335,6 +344,7 @@ function normalizeFilterValue(
     type: property.type,
     value,
     config: property.configJson as Record<string, any>,
+    allowArchivedSelectOptions: true,
   });
 
   if (property.type === DataSourcePropertyType.Number) {
@@ -347,6 +357,16 @@ function normalizeFilterValue(
     return normalized.dateValue;
   }
   return normalized.textValue;
+}
+
+function validatePosition(position: string | undefined): string | undefined {
+  if (position === undefined) return undefined;
+  try {
+    generateJitteredKeyBetween(position, null);
+    return position;
+  } catch {
+    throw new BadRequestException('Invalid position');
+  }
 }
 
 type RecordValueResponse = {

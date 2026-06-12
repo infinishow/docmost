@@ -120,6 +120,18 @@ describe('normalizePropertyValue', () => {
     ).toThrow(BadRequestException);
   });
 
+  it('rejects date ranges whose end is before start', () => {
+    expect(() =>
+      normalizePropertyValue({
+        type: DataSourcePropertyType.Date,
+        value: {
+          start: '2026-06-12T00:00:00.000Z',
+          end: '2026-06-11T00:00:00.000Z',
+        },
+      }),
+    ).toThrow('Date end cannot be before start date');
+  });
+
   it('keeps arbitrary value payloads when class-validator whitelisting runs', async () => {
     const dto = plainToInstance(UpdatePropertyValueDto, {
       recordId: '11111111-1111-4111-8111-111111111111',

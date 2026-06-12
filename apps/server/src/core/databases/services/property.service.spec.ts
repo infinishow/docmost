@@ -1,9 +1,13 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PropertyService } from './property.service';
 
 describe('PropertyService', () => {
   const dataSourceRepo = { findActiveById: jest.fn() };
   const propertyRepo = {
     findActiveById: jest.fn(),
+    findLastPosition: jest.fn(),
+    insert: jest.fn(),
+    update: jest.fn(),
     softDelete: jest.fn(),
   };
   const propertyValueRepo = { softDeleteByPropertyId: jest.fn() };
@@ -27,6 +31,24 @@ describe('PropertyService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('rejects invalid client-supplied positions', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.create(
+        {
+          databaseId: dataSource.id,
+          name: 'Text',
+          type: 'text',
+          position: 'invalid',
+        },
+        user,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(propertyRepo.insert).not.toHaveBeenCalled();
+  });
+
   it('rejects deleting title properties', async () => {
     propertyRepo.findActiveById.mockResolvedValue(titleProperty);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
@@ -45,6 +67,16 @@ describe('PropertyService', () => {
     expect(propertyValueRepo.softDeleteByPropertyId).toHaveBeenCalledWith(
       property.id,
       expect.anything(),
+    );
+  });
+
+  it('preserves forbidden write failures instead of hiding them as not found', async () => {
+    propertyRepo.findActiveById.mockResolvedValue(property);
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+    permissionService.validateWrite.mockRejectedValue(new ForbiddenException());
+
+    await expect(service.delete(property.id, user)).rejects.toBeInstanceOf(
+      ForbiddenException,
     );
   });
 });

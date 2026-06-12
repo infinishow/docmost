@@ -230,11 +230,19 @@ export class DataSourceRecordRepo {
           `%${String(opts.filter.value)}%`,
         );
       } else if (opts.filter.value !== null) {
-        query = query.where(
-          `filterValue.${column}`,
-          '=',
-          opts.filter.value as never,
-        );
+        if (opts.filter.type === 'date') {
+          query = query.where(
+            sql`cast(${sql.ref(`filterValue.${column}`)} as date)`,
+            '=',
+            sql`cast(${opts.filter.value as Date} as date)`,
+          );
+        } else {
+          query = query.where(
+            `filterValue.${column}`,
+            '=',
+            opts.filter.value as never,
+          );
+        }
       }
     }
 
