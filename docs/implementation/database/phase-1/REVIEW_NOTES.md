@@ -48,6 +48,15 @@ Nest can't resolve dependencies ... STORAGE_DRIVER_TOKEN
 
 이 기록은 "전체 server Jest 실패가 Phase 1 구현 때문에 새로 생겼는가?"를 판단하기 위한 baseline이다. 전체 Jest harness를 고치는 작업은 Phase 1 기능 구현과 별도 범위로 취급한다.
 
+Decision:
+
+```text
+2026-06-12
+  전체 server Jest harness 수정은 database Phase 1 완료 조건에서 제외한다.
+  후속 database phase에서도 같은 baseline failure를 Phase regression으로 곧바로 해석하지 않는다.
+  필요하면 별도 테스트 인프라 태스크/브랜치에서 다룬다.
+```
+
 ## 리뷰 대상
 
 검토 대상은 다음 Phase 1 방향이다.
