@@ -4,6 +4,50 @@
 
 이 문서는 Phase 1 server foundation spec을 작성하기 전에 확인해야 할 설계 리뷰 결과를 기록한다. 최종 spec이 아니라, spec 작성 시 반영해야 할 리스크와 결정 사항 목록이다.
 
+## Baseline verification note
+
+작성일: 2026-06-12
+
+Phase 1 구현 브랜치의 전체 server Jest 실패 여부를 해석할 때는 아래 baseline 결과를 먼저 확인한다.
+
+```text
+Baseline commit
+  de4820c0 docs: refine database phase 1 design
+
+Baseline worktree
+  /Users/infinishow/.config/superpowers/worktrees/docmost/database-phase-1-baseline
+
+Commands
+  pnpm install
+  pnpm server:build
+  pnpm --filter ./apps/server exec jest --runInBand
+
+Result
+  pnpm install: pass
+  pnpm server:build: pass
+  full server Jest: fail
+    Test Suites: 16 failed, 8 passed, 24 total
+    Tests: 6 failed, 145 passed, 151 total
+```
+
+따라서 Phase 1 전 baseline에서도 전체 server Jest는 이미 green이 아니었다. Phase 1 구현 검증 시 전체 server Jest 실패를 곧바로 Phase 1 regression으로 해석하지 않는다. 실패 원인을 비교할 때는 Phase 1 focused tests와 build 결과를 우선 확인하고, 전체 Jest 실패는 baseline과 failure signature를 대조한다.
+
+2026-06-12 기준 baseline의 대표 실패 signature:
+
+```text
+Cannot find module 'src/integrations/queue/constants'
+Cannot find module 'src/common/helpers/utils'
+Cannot find module 'src/collaboration/collaboration.util'
+Cannot find module 'src/common/decorators/public.decorator'
+Nest can't resolve dependencies ... GroupRepo
+Nest can't resolve dependencies ... KyselyModuleConnectionToken
+Nest can't resolve dependencies ... ConfigService
+Nest can't resolve dependencies ... JwtService
+Nest can't resolve dependencies ... STORAGE_DRIVER_TOKEN
+```
+
+이 기록은 "전체 server Jest 실패가 Phase 1 구현 때문에 새로 생겼는가?"를 판단하기 위한 baseline이다. 전체 Jest harness를 고치는 작업은 Phase 1 기능 구현과 별도 범위로 취급한다.
+
 ## 리뷰 대상
 
 검토 대상은 다음 Phase 1 방향이다.
