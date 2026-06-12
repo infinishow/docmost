@@ -154,7 +154,7 @@ describe('DataSourceRecordRepo.query', () => {
     );
   });
 
-  it('compares date equals filters by calendar date instead of exact timestamp', async () => {
+  it('compares date equals filters by UTC calendar date instead of exact timestamp', async () => {
     await repo.query({
       databaseId: 'database-1',
       limit: 50,
@@ -170,9 +170,11 @@ describe('DataSourceRecordRepo.query', () => {
       ([op, left]) =>
         op === 'where' &&
         typeof left?.toOperationNode === 'function' &&
-        left.toOperationNode().sqlFragments?.some((fragment: string) =>
-          fragment.includes('cast('),
-        ),
+        left
+          .toOperationNode()
+          .sqlFragments?.some((fragment: string) =>
+            fragment.includes("at time zone 'UTC'"),
+          ),
     );
     expect(dateWhere).toBeDefined();
     expect(dateWhere[2]).toBe('=');

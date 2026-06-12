@@ -1,4 +1,11 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateViewDto {
   @IsUUID()
@@ -12,6 +19,7 @@ export class CreateViewDto {
   type: string;
 
   @IsOptional()
+  @IsObject()
   config?: Record<string, unknown>;
 
   @IsOptional()
@@ -29,6 +37,7 @@ export class UpdateViewDto {
   name?: string;
 
   @IsOptional()
+  @IsObject()
   config?: Record<string, unknown>;
 
   @IsOptional()

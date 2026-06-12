@@ -1,4 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { CreatePropertyDto, UpdatePropertyDto } from '../dto/property.dto';
 import { PropertyService } from './property.service';
 
 describe('PropertyService', () => {
@@ -30,6 +33,30 @@ describe('PropertyService', () => {
   const titleProperty = { ...property, id: 'title-1', type: 'title' };
 
   beforeEach(() => jest.clearAllMocks());
+
+  it('rejects non-object property config payloads', async () => {
+    const createDto = plainToInstance(CreatePropertyDto, {
+      databaseId: '09a9b3ac-7b4e-4e4b-9287-718d76865727',
+      name: 'Status',
+      type: 'select',
+      config: 'invalid',
+    });
+    const updateDto = plainToInstance(UpdatePropertyDto, {
+      propertyId: '09a9b3ac-7b4e-4e4b-9287-718d76865727',
+      config: 'invalid',
+    });
+
+    await expect(validate(createDto)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: 'config' }),
+      ]),
+    );
+    await expect(validate(updateDto)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: 'config' }),
+      ]),
+    );
+  });
 
   it('rejects invalid client-supplied positions', async () => {
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);

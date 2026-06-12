@@ -232,7 +232,7 @@ export class DataSourceRecordRepo {
       } else if (opts.filter.value !== null) {
         if (opts.filter.type === 'date') {
           query = query.where(
-            sql`cast(${sql.ref(`filterValue.${column}`)} as date)`,
+            sql`cast(${sql.ref(`filterValue.${column}`)} at time zone 'UTC' as date)`,
             '=',
             sql`cast(${opts.filter.value as Date} as date)`,
           );

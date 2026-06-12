@@ -1,4 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { CreateViewDto, UpdateViewDto } from '../dto/view.dto';
 import { ViewService } from './view.service';
 
 describe('ViewService', () => {
@@ -39,6 +42,30 @@ describe('ViewService', () => {
     lockQuery.where.mockReturnValue(lockQuery);
     lockQuery.forUpdate.mockReturnValue(lockQuery);
     lockQuery.executeTakeFirst.mockResolvedValue({ id: dataSource.id });
+  });
+
+  it('rejects non-object view config payloads', async () => {
+    const createDto = plainToInstance(CreateViewDto, {
+      databaseId: '09a9b3ac-7b4e-4e4b-9287-718d76865727',
+      name: 'Table',
+      type: 'table',
+      config: 'invalid',
+    });
+    const updateDto = plainToInstance(UpdateViewDto, {
+      viewId: '09a9b3ac-7b4e-4e4b-9287-718d76865727',
+      config: 'invalid',
+    });
+
+    await expect(validate(createDto)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: 'config' }),
+      ]),
+    );
+    await expect(validate(updateDto)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: 'config' }),
+      ]),
+    );
   });
 
   it('rejects non-table views', async () => {

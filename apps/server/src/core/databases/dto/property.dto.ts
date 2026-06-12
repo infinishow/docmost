@@ -1,4 +1,11 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import { DATA_SOURCE_PROPERTY_TYPES } from '../services/property-value-normalizer';
 
 export class CreatePropertyDto {
@@ -13,6 +20,7 @@ export class CreatePropertyDto {
   type: string;
 
   @IsOptional()
+  @IsObject()
   config?: Record<string, unknown>;
 
   @IsOptional()
@@ -30,6 +38,7 @@ export class UpdatePropertyDto {
   name?: string;
 
   @IsOptional()
+  @IsObject()
   config?: Record<string, unknown>;
 
   @IsOptional()
