@@ -33,7 +33,7 @@ export class ViewService {
       dataSourceId: dataSource.id,
       name: dto.name,
       type: dto.type,
-      configJson: (dto.config ?? {}) as any,
+      configJson: normalizeViewConfig(dto.config),
       position:
         validatePosition(dto.position) ??
         generateJitteredKeyBetween(lastPosition ?? null, null),
@@ -47,7 +47,9 @@ export class ViewService {
     await this.validateWrite(dataSource, user);
     const updated = await this.viewRepo.update(view.id, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
-      ...(dto.config !== undefined ? { configJson: dto.config as any } : {}),
+      ...(dto.config !== undefined
+        ? { configJson: normalizeViewConfig(dto.config) }
+        : {}),
       ...(dto.position !== undefined
         ? { position: validatePosition(dto.position) }
         : {}),
@@ -94,6 +96,23 @@ export class ViewService {
   private async validateWrite(dataSource: any, user: User): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
+}
+
+function normalizeViewConfig(config: unknown): Record<string, any> {
+  const input =
+    typeof config === 'object' && config !== null && !Array.isArray(config)
+      ? (config as Record<string, any>)
+      : {};
+  return {
+    visiblePropertyIds: Array.isArray(input.visiblePropertyIds)
+      ? input.visiblePropertyIds
+      : [],
+    propertyOrder: Array.isArray(input.propertyOrder)
+      ? input.propertyOrder
+      : [],
+    filter: input.filter ?? null,
+    sort: Array.isArray(input.sort) ? input.sort : [],
+  };
 }
 
 function validatePosition(position: string | undefined): string | undefined {

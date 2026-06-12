@@ -76,6 +76,49 @@ describe('PropertyService', () => {
     expect(propertyRepo.insert).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed select property config before saving', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.create(
+        {
+          databaseId: dataSource.id,
+          name: 'Status',
+          type: 'select',
+          config: { options: [{ id: 'todo', name: 'Todo' }] },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Invalid select option config');
+
+    expect(propertyRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate select option ids on update', async () => {
+    propertyRepo.findActiveById.mockResolvedValue({
+      ...property,
+      type: 'select',
+    });
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await expect(
+      service.update(
+        {
+          propertyId: property.id,
+          config: {
+            options: [
+              { id: 'todo', name: 'Todo', sortKey: '001' },
+              { id: 'todo', name: 'Duplicate', sortKey: '002' },
+            ],
+          },
+        },
+        user,
+      ),
+    ).rejects.toThrow('Duplicate select option id');
+
+    expect(propertyRepo.update).not.toHaveBeenCalled();
+  });
+
   it('rejects deleting title properties', async () => {
     propertyRepo.findActiveById.mockResolvedValue(titleProperty);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);

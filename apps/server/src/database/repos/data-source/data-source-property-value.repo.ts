@@ -54,6 +54,31 @@ export class DataSourcePropertyValueRepo {
       .executeTakeFirstOrThrow();
   }
 
+  async upsertMany(
+    data: Array<Omit<InsertableDataSourcePropertyValue, 'version'>>,
+    trx?: KyselyTransaction,
+  ): Promise<DataSourcePropertyValue[]> {
+    if (data.length === 0) return [];
+    return dbOrTx(this.db, trx)
+      .insertInto('dataSourcePropertyValues')
+      .values(data.map((item) => ({ ...item, version: 1 })))
+      .onConflict((oc) =>
+        oc.columns(['recordId', 'propertyId']).doUpdateSet((eb) => ({
+          valueJson: eb.ref('excluded.valueJson'),
+          textValue: eb.ref('excluded.textValue'),
+          numberValue: eb.ref('excluded.numberValue'),
+          dateValue: eb.ref('excluded.dateValue'),
+          boolValue: eb.ref('excluded.boolValue'),
+          lastEditedById: eb.ref('excluded.lastEditedById'),
+          updatedAt: new Date(),
+          deletedAt: null,
+          version: sql<number>`version + 1`,
+        })),
+      )
+      .returning(this.fields)
+      .execute();
+  }
+
   async softDeleteByPropertyId(
     propertyId: string,
     trx?: KyselyTransaction,

@@ -134,10 +134,11 @@ export function normalizePropertyValue(input: {
     ) {
       throw new BadRequestException('Value must be option ids');
     }
-    for (const value of input.value) {
+    const optionIds = uniqueStrings(input.value);
+    for (const value of optionIds) {
       getActiveOption(input.config, value, input.allowArchivedSelectOptions);
     }
-    return { valueJson: input.value, ...empty };
+    return { valueJson: optionIds, ...empty };
   }
 
   if (input.type === DataSourcePropertyType.Person) {
@@ -147,10 +148,14 @@ export function normalizePropertyValue(input: {
     ) {
       throw new BadRequestException('Value must be user ids');
     }
-    return { valueJson: input.value, ...empty };
+    return { valueJson: uniqueStrings(input.value), ...empty };
   }
 
   throw new BadRequestException('Unsupported property type');
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
 }
 
 function isTextType(type: string): boolean {

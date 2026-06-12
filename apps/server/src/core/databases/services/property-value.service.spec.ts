@@ -11,7 +11,7 @@ describe('PropertyValueService', () => {
   const propertyRepo = { findActiveById: jest.fn() };
   const propertyValueRepo = { upsert: jest.fn() };
   const permissionService = { validateWrite: jest.fn() };
-  const userRepo = { findById: jest.fn() };
+  const userRepo = { findById: jest.fn(), findByIds: jest.fn() };
   const db = { transaction: () => ({ execute: (cb: any) => cb('trx') }) };
   const service = new PropertyValueService(
     dataSourceRepo as any,
@@ -59,7 +59,7 @@ describe('PropertyValueService', () => {
       id: 'database-1',
       parentPageId: 'page-1',
     });
-    userRepo.findById.mockResolvedValueOnce(null);
+    userRepo.findByIds.mockResolvedValueOnce([]);
 
     await expect(
       service.update(
@@ -72,8 +72,8 @@ describe('PropertyValueService', () => {
       ),
     ).rejects.toThrow('User not found');
 
-    expect(userRepo.findById).toHaveBeenCalledWith(
-      'other-user',
+    expect(userRepo.findByIds).toHaveBeenCalledWith(
+      ['other-user'],
       user.workspaceId,
       expect.anything(),
     );

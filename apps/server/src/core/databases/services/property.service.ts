@@ -44,7 +44,7 @@ export class PropertyService {
       dataSourceId: dataSource.id,
       name: dto.name,
       type: dto.type,
-      configJson: (dto.config ?? {}) as any,
+      configJson: validatePropertyConfig(dto.type, dto.config),
       position:
         validatePosition(dto.position) ??
         generateJitteredKeyBetween(lastPosition ?? null, null),
@@ -61,7 +61,9 @@ export class PropertyService {
     await this.validateWrite(dataSource, user);
     const updated = await this.propertyRepo.update(property.id, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
-      ...(dto.config !== undefined ? { configJson: dto.config as any } : {}),
+      ...(dto.config !== undefined
+        ? { configJson: validatePropertyConfig(property.type, dto.config) }
+        : {}),
       ...(dto.position !== undefined
         ? { position: validatePosition(dto.position) }
         : {}),
@@ -98,6 +100,47 @@ export class PropertyService {
   private async validateWrite(dataSource: any, user: User): Promise<void> {
     await this.permissionService.validateWrite(dataSource, user);
   }
+}
+
+function validatePropertyConfig(
+  type: string,
+  config: unknown,
+): Record<string, any> {
+  const normalized = isConfigRecord(config) ? config : {};
+  if (
+    type !== DataSourcePropertyType.Select &&
+    type !== DataSourcePropertyType.MultiSelect
+  ) {
+    return normalized;
+  }
+
+  if (!Array.isArray(normalized.options)) {
+    return { ...normalized, options: [] };
+  }
+
+  const optionIds = new Set<string>();
+  for (const option of normalized.options) {
+    if (
+      !isConfigRecord(option) ||
+      typeof option.id !== 'string' ||
+      typeof option.name !== 'string' ||
+      typeof option.sortKey !== 'string' ||
+      (option.color !== undefined && typeof option.color !== 'string') ||
+      (option.archived !== undefined && typeof option.archived !== 'boolean')
+    ) {
+      throw new BadRequestException('Invalid select option config');
+    }
+    if (optionIds.has(option.id)) {
+      throw new BadRequestException('Duplicate select option id');
+    }
+    optionIds.add(option.id);
+  }
+
+  return normalized;
+}
+
+function isConfigRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function validatePosition(position: string | undefined): string | undefined {

@@ -88,13 +88,15 @@ export class PropertyValueService {
     if (property.type !== DataSourcePropertyType.Person || value === null) {
       return;
     }
-    for (const userId of value as string[]) {
-      const workspaceUser = await this.userRepo.findById(
-        userId,
-        user.workspaceId,
-        { trx },
-      );
-      if (!workspaceUser) throw new BadRequestException('User not found');
+    const userIds = Array.from(new Set(value as string[]));
+    if (userIds.length === 0) return;
+    const workspaceUsers = await this.userRepo.findByIds(
+      userIds,
+      user.workspaceId,
+      { trx },
+    );
+    if (workspaceUsers.length !== userIds.length) {
+      throw new BadRequestException('User not found');
     }
   }
 }

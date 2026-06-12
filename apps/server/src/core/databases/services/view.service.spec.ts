@@ -92,6 +92,30 @@ describe('ViewService', () => {
     expect(viewRepo.insert).not.toHaveBeenCalled();
   });
 
+  it('uses a structured default table view config', async () => {
+    dataSourceRepo.findActiveById.mockResolvedValue(dataSource);
+
+    await service.create(
+      {
+        databaseId: dataSource.id,
+        name: 'Table',
+        type: 'table',
+      },
+      user,
+    );
+
+    expect(viewRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configJson: {
+          visiblePropertyIds: [],
+          propertyOrder: [],
+          filter: null,
+          sort: [],
+        },
+      }),
+    );
+  });
+
   it('rejects deleting the last view', async () => {
     viewRepo.findActiveById.mockResolvedValue(lastView);
     dataSourceRepo.findActiveById.mockResolvedValue(dataSource);

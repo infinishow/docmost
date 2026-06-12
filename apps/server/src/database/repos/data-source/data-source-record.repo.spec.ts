@@ -34,6 +34,11 @@ class FakeExpressionBuilder {
     this.ops.push(['or', expressions]);
     return { type: 'or', expressions };
   }
+
+  and(expressions: unknown[]) {
+    this.ops.push(['and', expressions]);
+    return { type: 'and', expressions };
+  }
 }
 
 class FakeSelectBuilder {
@@ -49,6 +54,7 @@ class FakeSelectBuilder {
       const expressionBuilder = new FakeExpressionBuilder();
       const eb = expressionBuilder.call.bind(expressionBuilder) as any;
       eb.or = expressionBuilder.or.bind(expressionBuilder);
+      eb.and = expressionBuilder.and.bind(expressionBuilder);
       this.ops.push(['whereCallback', args[0](eb), expressionBuilder.ops]);
       return this;
     }
@@ -86,75 +92,118 @@ describe('DataSourceRecordRepo.query', () => {
     } as any);
   });
 
-  it('treats missing property value rows as null equals matches', async () => {
+  it('treats missing or null helper values as empty matches', async () => {
     await repo.query({
       databaseId: 'database-1',
       limit: 50,
       filter: {
         propertyId: 'property-1',
         type: 'text',
-        operator: 'equals',
-        value: null,
+        operator: 'is_empty',
       },
     });
 
-    expect(builder.ops).toContainEqual([
-      'leftJoin',
-      'dataSourcePropertyValues as filterValue',
-      [
-        ['onRef', 'filterValue.recordId', '=', 'dataSourceRecords.id'],
-        ['on', 'filterValue.propertyId', '=', 'property-1'],
-        ['on', 'filterValue.deletedAt', 'is', null],
-      ],
-    ]);
-    expect(builder.ops).not.toContainEqual([
-      'innerJoin',
-      'dataSourcePropertyValues as filterValue',
-      'filterValue.recordId',
-      'dataSourceRecords.id',
-    ]);
-    expect(builder.ops).toEqual(
-      expect.arrayContaining([
-        [
-          'whereCallback',
-          expect.objectContaining({ type: 'or' }),
-          expect.arrayContaining([
-            ['eb', 'filterValue.id', 'is', null],
-            ['eb', 'filterValue.textValue', 'is', null],
-          ]),
-        ],
-      ]),
+    const filterWhere = builder.ops.find(
+      ([op, expression]) => op === 'whereCallback' && expression?.toOperationNode,
     );
+    expect(filterWhere).toBeDefined();
+    const filterSql = filterWhere[1].toOperationNode();
+    expect(collectSqlFragments(filterSql)).toContain('not exists');
+    expect(collectValueNodeValues(filterSql)).toContain('property-1');
   });
 
-  it('sorts null property helper values last in both directions', async () => {
+  it('builds recursive and/or filters with supported phase one operators', async () => {
     await repo.query({
       databaseId: 'database-1',
       limit: 50,
-      sort: {
-        propertyId: 'property-1',
-        type: 'number',
-        direction: 'asc',
+      filter: {
+        or: [
+          {
+            propertyId: 'property-title',
+            type: 'text',
+            operator: 'contains',
+            value: 'docs',
+          },
+          {
+            and: [
+              {
+                propertyId: 'property-score',
+                type: 'number',
+                operator: 'greater_than',
+                value: 10,
+              },
+              {
+                propertyId: 'property-date',
+                type: 'date',
+                operator: 'before',
+                value: new Date('2026-06-12T22:15:00.000Z'),
+              },
+            ],
+          },
+        ],
       },
     });
 
-    const orderOps = builder.ops.filter(([op]) => op === 'orderBy');
-    expect(orderOps).toHaveLength(1);
-    const orderNode = orderOps[0][1].toOperationNode();
-    expect(orderNode.sqlFragments).toContain(' nulls last');
-    expect(orderNode.parameters[1].sqlFragments).toContain('asc');
+    const filterWhere = builder.ops.find(
+      ([op]) => op === 'whereCallback',
+    );
+    expect(filterWhere).toBeDefined();
+    expect(collectValueNodeValues(filterWhere[1])).toEqual(
+      expect.arrayContaining(['property-title', '%docs%', 'property-score', 10, 'property-date']),
+    );
+  });
+
+  it('sorts by up to three helper values before stable position and id tie breakers', async () => {
+    await repo.query({
+      databaseId: 'database-1',
+      limit: 50,
+      cursor: 'cursor-1',
+      sort: [
+        {
+          propertyId: 'property-1',
+          type: 'number',
+          direction: 'asc',
+        },
+        {
+          propertyId: 'property-2',
+          type: 'text',
+          direction: 'desc',
+        },
+        {
+          propertyId: 'property-3',
+          type: 'date',
+          direction: 'asc',
+        },
+      ],
+    });
+
+    expect(builder.ops).toEqual(
+      expect.arrayContaining([
+        ['leftJoin', 'dataSourcePropertyValues as sortValue0', expect.any(Array)],
+        ['leftJoin', 'dataSourcePropertyValues as sortValue1', expect.any(Array)],
+        ['leftJoin', 'dataSourcePropertyValues as sortValue2', expect.any(Array)],
+      ]),
+    );
+
     expect(executeWithCursorPagination).toHaveBeenCalledWith(
       builder,
       expect.objectContaining({
-        fields: expect.arrayContaining([
+        cursor: 'cursor-1',
+        fields: [
+          expect.objectContaining({ key: 'sort_0_null_rank' }),
+          expect.objectContaining({ key: 'sort_0_value', direction: 'asc' }),
+          expect.objectContaining({ key: 'sort_1_null_rank' }),
+          expect.objectContaining({ key: 'sort_1_value', direction: 'desc' }),
+          expect.objectContaining({ key: 'sort_2_null_rank' }),
+          expect.objectContaining({ key: 'sort_2_value', direction: 'asc' }),
           expect.objectContaining({ key: 'position' }),
           expect.objectContaining({ key: 'id' }),
-        ]),
+        ],
       }),
     );
   });
 
-  it('compares date equals filters by UTC calendar date instead of exact timestamp', async () => {
+  it('compares date equals filters by value json calendar date and timezone', async () => {
     await repo.query({
       databaseId: 'database-1',
       limit: 50,
@@ -162,25 +211,55 @@ describe('DataSourceRecordRepo.query', () => {
         propertyId: 'property-1',
         type: 'date',
         operator: 'equals',
-        value: new Date('2026-06-11T15:30:00.000Z'),
+        value: {
+          start: '2026-06-11T15:30:00.000Z',
+          timeZone: 'Asia/Seoul',
+        },
       },
     });
 
     const dateWhere = builder.ops.find(
-      ([op, left]) =>
-        op === 'where' &&
-        typeof left?.toOperationNode === 'function' &&
-        left
-          .toOperationNode()
-          .sqlFragments?.some((fragment: string) =>
-            fragment.includes("at time zone 'UTC'"),
-          ),
+      ([op, expression]) => op === 'whereCallback' && expression?.toOperationNode,
     );
     expect(dateWhere).toBeDefined();
-    expect(dateWhere[2]).toBe('=');
-    expect(dateWhere[3].toOperationNode().sqlFragments).toEqual([
-      'cast(',
-      ' as date)',
-    ]);
+    const dateNode = dateWhere[1].toOperationNode();
+    expect(collectSqlFragments(dateNode)).toContain("value_json->>'start'");
+    expect(collectSqlFragments(dateNode)).toContain("value_json->>'timeZone'");
+    expect(collectSqlFragments(dateNode)).not.toContain('cast($');
+    expect(collectValueNodeValues(dateNode)).toContain('2026-06-12');
   });
 });
+
+function collectValueNodeValues(node: any): unknown[] {
+  if (!node || typeof node !== 'object') return [];
+  if (typeof node.toOperationNode === 'function') {
+    return collectValueNodeValues(node.toOperationNode());
+  }
+  const own = node.kind === 'ValueNode' ? [node.value] : [];
+  return [
+    ...own,
+    ...Object.values(node).flatMap((value) =>
+      Array.isArray(value)
+        ? value.flatMap(collectValueNodeValues)
+        : collectValueNodeValues(value),
+    ),
+  ];
+}
+
+function collectSqlFragments(node: any): string {
+  if (!node || typeof node !== 'object') return '';
+  if (typeof node.toOperationNode === 'function') {
+    return collectSqlFragments(node.toOperationNode());
+  }
+  const own = Array.isArray(node.sqlFragments) ? node.sqlFragments.join('') : '';
+  return (
+    own +
+    Object.values(node)
+      .map((value) =>
+        Array.isArray(value)
+          ? value.map(collectSqlFragments).join('')
+          : collectSqlFragments(value),
+      )
+      .join('')
+  );
+}

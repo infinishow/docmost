@@ -63,6 +63,30 @@ describe('normalizePropertyValue', () => {
     expect(normalized.textValue).toBe('001');
   });
 
+  it('deduplicates multi select option ids while preserving order', () => {
+    const normalized = normalizePropertyValue({
+      type: DataSourcePropertyType.MultiSelect,
+      value: ['todo', 'done', 'todo'],
+      config: {
+        options: [
+          { id: 'todo', name: 'Todo', sortKey: '001' },
+          { id: 'done', name: 'Done', sortKey: '002' },
+        ],
+      },
+    });
+
+    expect(normalized.valueJson).toEqual(['todo', 'done']);
+  });
+
+  it('deduplicates person user ids while preserving order', () => {
+    const normalized = normalizePropertyValue({
+      type: DataSourcePropertyType.Person,
+      value: ['user-1', 'user-2', 'user-1'],
+    });
+
+    expect(normalized.valueJson).toEqual(['user-1', 'user-2']);
+  });
+
   it('rejects archived select options for new writes', () => {
     expect(() =>
       normalizePropertyValue({

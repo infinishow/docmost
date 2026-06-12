@@ -15,12 +15,27 @@ import {
   UpdatableDataSourceRecord,
 } from '@docmost/db/types/entity.types';
 
-export type DataSourceRecordQueryFilter = {
+export type DataSourceRecordQueryFilterOperator =
+  | 'contains'
+  | 'equals'
+  | 'greater_than'
+  | 'less_than'
+  | 'before'
+  | 'after'
+  | 'is_empty'
+  | 'is_not_empty';
+
+export type DataSourceRecordQueryFilterLeaf = {
   propertyId: string;
   type: string;
-  operator: 'contains' | 'equals';
-  value: unknown;
+  operator: DataSourceRecordQueryFilterOperator;
+  value?: unknown;
 };
+
+export type DataSourceRecordQueryFilter =
+  | DataSourceRecordQueryFilterLeaf
+  | { and: DataSourceRecordQueryFilter[] }
+  | { or: DataSourceRecordQueryFilter[] };
 
 export type DataSourceRecordQuerySort = {
   propertyId: string;
@@ -33,7 +48,7 @@ export type DataSourceRecordQueryOptions = {
   cursor?: string;
   limit: number;
   filter?: DataSourceRecordQueryFilter;
-  sort?: DataSourceRecordQuerySort;
+  sort?: DataSourceRecordQuerySort[];
 };
 
 @Injectable()
@@ -197,72 +212,50 @@ export class DataSourceRecordRepo {
       .where('dataSourceRecords.deletedAt', 'is', null);
 
     if (opts.filter) {
-      const column = propertyValueColumn(opts.filter.type);
-      if (opts.filter.operator === 'equals' && opts.filter.value === null) {
-        query = query
-          .leftJoin('dataSourcePropertyValues as filterValue', (join) =>
-            join
-              .onRef('filterValue.recordId', '=', 'dataSourceRecords.id')
-              .on('filterValue.propertyId', '=', opts.filter.propertyId)
-              .on('filterValue.deletedAt', 'is', null),
-          )
-          .where((eb) =>
-            eb.or([
-              eb('filterValue.id', 'is', null),
-              eb(`filterValue.${column}`, 'is', null),
-            ]),
-          );
-      } else {
-        query = query
-          .innerJoin(
-            'dataSourcePropertyValues as filterValue',
-            'filterValue.recordId',
-            'dataSourceRecords.id',
-          )
-          .where('filterValue.propertyId', '=', opts.filter.propertyId)
-          .where('filterValue.deletedAt', 'is', null);
-      }
-
-      if (opts.filter.operator === 'contains') {
-        query = query.where(
-          'filterValue.textValue',
-          'ilike',
-          `%${String(opts.filter.value)}%`,
-        );
-      } else if (opts.filter.value !== null) {
-        if (opts.filter.type === 'date') {
-          query = query.where(
-            sql`cast(${sql.ref(`filterValue.${column}`)} at time zone 'UTC' as date)`,
-            '=',
-            sql`cast(${opts.filter.value as Date} as date)`,
-          );
-        } else {
-          query = query.where(
-            `filterValue.${column}`,
-            '=',
-            opts.filter.value as never,
-          );
-        }
-      }
+      query = query.where((eb) => buildFilterExpression(eb, opts.filter!));
     }
 
+    const paginationFields: any[] = [];
     if (opts.sort) {
-      query = query
-        .leftJoin('dataSourcePropertyValues as sortValue', (join) =>
-          join
-            .onRef('sortValue.recordId', '=', 'dataSourceRecords.id')
-            .on('sortValue.propertyId', '=', opts.sort.propertyId)
-            .on('sortValue.deletedAt', 'is', null),
-        )
-        .orderBy(
-          sql`${sql.ref(`sortValue.${propertyValueColumn(opts.sort.type)}`)} ${sql.raw(opts.sort.direction)} nulls last`,
+      for (const [index, sort] of opts.sort.slice(0, 3).entries()) {
+        const alias = `sortValue${index}`;
+        const nullAlias = `sort_${index}_null_rank`;
+        const valueAlias = `sort_${index}_value`;
+        const column = propertyValueColumn(sort.type);
+        const valueRef = sql.ref(`${alias}.${column}`);
+        const nullRankExpression = sql<number>`case when ${valueRef} is null then 1 else 0 end`;
+        const valueExpression = sortCursorValueExpression(valueRef, sort.type);
+        query = query
+          .leftJoin(`dataSourcePropertyValues as ${alias}`, (join) =>
+            join
+              .onRef(`${alias}.recordId`, '=', 'dataSourceRecords.id')
+              .on(`${alias}.propertyId`, '=', sort.propertyId)
+              .on(`${alias}.deletedAt`, 'is', null),
+          )
+          .select(nullRankExpression.as(nullAlias))
+          .select(valueExpression.as(valueAlias));
+        paginationFields.push(
+          {
+            expression: nullAlias,
+            direction: 'asc',
+            key: nullAlias,
+            cursorExpression: nullRankExpression,
+          },
+          {
+            expression: valueAlias,
+            direction: sort.direction,
+            key: valueAlias,
+            cursorExpression: valueExpression,
+          },
         );
+      }
     }
 
     return executeWithCursorPagination(query, {
       perPage: opts.limit,
       cursor: opts.cursor,
       fields: [
+        ...paginationFields,
         {
           expression: 'dataSourceRecords.position',
           direction: 'asc',
@@ -272,9 +265,161 @@ export class DataSourceRecordRepo {
         },
         { expression: 'dataSourceRecords.id', direction: 'asc', key: 'id' },
       ],
-      parseCursor: (cursor) => cursor,
+      parseCursor: (cursor) => parseQueryCursor(cursor, opts.sort ?? []),
     } as any) as Promise<CursorPaginationResult<DataSourceRecord>>;
   }
+}
+
+function buildFilterExpression(
+  eb: any,
+  filter: DataSourceRecordQueryFilter,
+): any {
+  if ('and' in filter) {
+    return eb.and(
+      filter.and.map((child) => buildFilterExpression(eb, child)),
+    );
+  }
+  if ('or' in filter) {
+    return eb.or(
+      filter.or.map((child) => buildFilterExpression(eb, child)),
+    );
+  }
+  return buildLeafFilterExpression(filter);
+}
+
+function buildLeafFilterExpression(filter: DataSourceRecordQueryFilterLeaf): any {
+  const column = propertyValueColumn(filter.type);
+  const valueRef = sql.ref(`filter_value.${column}`);
+  const base = sql`filter_value.record_id = data_source_records.id
+    and filter_value.property_id = ${filter.propertyId}
+    and filter_value.deleted_at is null`;
+
+  if (
+    filter.operator === 'is_empty' ||
+    (filter.operator === 'equals' && filter.value === null)
+  ) {
+    return sql`not exists (
+      select 1 from data_source_property_values as filter_value
+      where ${base}
+      and ${valueRef} is not null
+      and ${emptyComparableExpression(filter, valueRef)}
+    )`;
+  }
+
+  if (filter.operator === 'is_not_empty') {
+    return sql`exists (
+      select 1 from data_source_property_values as filter_value
+      where ${base}
+      and ${valueRef} is not null
+      and ${emptyComparableExpression(filter, valueRef)}
+    )`;
+  }
+
+  return sql`exists (
+    select 1 from data_source_property_values as filter_value
+    where ${base}
+    and ${operatorExpression(filter, valueRef)}
+  )`;
+}
+
+function emptyComparableExpression(
+  filter: DataSourceRecordQueryFilterLeaf,
+  valueRef: any,
+): any {
+  return isTextLikeType(filter.type) ? sql`${valueRef} != ''` : sql`true`;
+}
+
+function operatorExpression(
+  filter: DataSourceRecordQueryFilterLeaf,
+  valueRef: any,
+): any {
+  if (filter.operator === 'contains') {
+    return sql`${valueRef} ilike ${`%${String(filter.value)}%`}`;
+  }
+  if (filter.type === 'date' && filter.operator === 'equals') {
+    return sql`${dateValueCalendarExpression()} = ${dateFilterCalendarDate(filter.value)}::date`;
+  }
+  if (filter.operator === 'greater_than' || filter.operator === 'after') {
+    return sql`${valueRef} > ${filter.value as never}`;
+  }
+  if (filter.operator === 'less_than' || filter.operator === 'before') {
+    return sql`${valueRef} < ${filter.value as never}`;
+  }
+  return sql`${valueRef} = ${filter.value as never}`;
+}
+
+function sortCursorValueExpression(ref: any, type: string): any {
+  if (type === 'number') return sql<number>`coalesce(${ref}, 0)`;
+  if (type === 'checkbox') return sql<number>`case when ${ref} then 1 else 0 end`;
+  if (type === 'date') return sql<Date>`coalesce(${ref}, '1970-01-01'::timestamptz)`;
+  return sql<string>`coalesce(${ref}, '')`;
+}
+
+function parseQueryCursor(
+  cursor: Record<string, string>,
+  sortItems: DataSourceRecordQuerySort[],
+): Record<string, unknown> {
+  const parsed: Record<string, unknown> = { ...cursor };
+
+  for (const [index, sort] of sortItems.slice(0, 3).entries()) {
+    parsed[`sort_${index}_null_rank`] = Number.parseInt(
+      cursor[`sort_${index}_null_rank`],
+      10,
+    );
+
+    const valueKey = `sort_${index}_value`;
+    if (sort.type === 'number' || sort.type === 'checkbox') {
+      parsed[valueKey] = Number(cursor[valueKey]);
+    } else if (sort.type === 'date') {
+      parsed[valueKey] = new Date(cursor[valueKey]);
+    }
+  }
+
+  return parsed;
+}
+
+function dateValueCalendarExpression(): any {
+  return sql`cast((filter_value.value_json->>'start')::timestamptz at time zone coalesce(nullif(filter_value.value_json->>'timeZone', ''), 'UTC') as date)`;
+}
+
+function dateFilterCalendarDate(value: unknown): string {
+  if (isDateFilterValue(value)) {
+    return toCalendarDate(value.start, value.timeZone);
+  }
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return new Date(String(value)).toISOString().slice(0, 10);
+}
+
+function toCalendarDate(value: string, timeZone = 'UTC'): string {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const partByType = new Map(parts.map((part) => [part.type, part.value]));
+  return [
+    partByType.get('year'),
+    partByType.get('month'),
+    partByType.get('day'),
+  ].join('-');
+}
+
+function isDateFilterValue(
+  value: unknown,
+): value is { start: string; timeZone?: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as any).start === 'string' &&
+    ((value as any).timeZone === undefined ||
+      typeof (value as any).timeZone === 'string')
+  );
+}
+
+function isTextLikeType(type: string): boolean {
+  return ['title', 'text', 'url', 'email', 'phone', 'select'].includes(type);
 }
 
 function propertyValueColumn(type: string): string {

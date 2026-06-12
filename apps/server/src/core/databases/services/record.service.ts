@@ -9,18 +9,22 @@ import { DataSourcePropertyRepo } from '@docmost/db/repos/data-source/data-sourc
 import { DataSourcePropertyValueRepo } from '@docmost/db/repos/data-source/data-source-property-value.repo';
 import {
   DataSourceRecordQueryFilter,
+  DataSourceRecordQueryFilterOperator,
   DataSourceRecordQueryOptions,
   DataSourceRecordQuerySort,
   DataSourceRecordRepo,
 } from '@docmost/db/repos/data-source/data-source-record.repo';
 import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
+import { DataSourceViewRepo } from '@docmost/db/repos/data-source/data-source-view.repo';
 import { UserRepo } from '@docmost/db/repos/user/user.repo';
 import {
   DataSourceProperty,
   DataSourcePropertyValue,
   DataSourceRecord,
+  InsertableDataSourcePropertyValue,
   User,
 } from '@docmost/db/types/entity.types';
+import { Json } from '@docmost/db/types/db';
 import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
 import { CreateRecordDto, UpdateRecordDto } from '../dto/record.dto';
@@ -37,6 +41,7 @@ export class RecordService {
     private readonly dataSourceRepo: DataSourceRepo,
     private readonly recordRepo: DataSourceRecordRepo,
     private readonly propertyRepo: DataSourcePropertyRepo,
+    private readonly viewRepo: DataSourceViewRepo,
     private readonly propertyValueRepo: DataSourcePropertyValueRepo,
     private readonly permissionService: DatabasePermissionService,
     private readonly userRepo: UserRepo,
@@ -71,6 +76,9 @@ export class RecordService {
           trx,
         );
         const propertyById = new Map(properties.map((item) => [item.id, item]));
+        const valueInputs: Array<
+          Omit<DataSourcePropertyValueInsert, 'dataSourceId' | 'recordId'>
+        > = [];
         for (const [propertyId, value] of Object.entries(dto.values)) {
           const property = propertyById.get(propertyId);
           if (!property) {
@@ -78,10 +86,23 @@ export class RecordService {
               'Property does not belong to database',
             );
           }
-          values.push(
-            await this.upsertValue(record, property, value, user, trx),
-          );
+          valueInputs.push(this.normalizeValue(property, value, user));
         }
+        await this.validatePersonUserIds(
+          valueInputs.flatMap((item) => item.personUserIds),
+          user,
+          trx,
+        );
+        values.push(
+          ...(await this.propertyValueRepo.upsertMany(
+            valueInputs.map(({ personUserIds: _personUserIds, ...value }) => ({
+              dataSourceId: record.dataSourceId,
+              recordId: record.id,
+              ...value,
+            })),
+            trx,
+          )),
+        );
         if (values.length > 0) {
           await this.recordRepo.incrementVersion(record.id, trx);
         }
@@ -122,20 +143,19 @@ export class RecordService {
   async query(dto: QueryRecordsDto, user: User) {
     const dataSource = await this.findActiveDataSource(dto.databaseId);
     await this.validateRead(dataSource, user);
-    if (dto.viewId) {
-      throw new BadRequestException(
-        'View queries are not supported in phase one',
-      );
-    }
     const properties = await this.propertyRepo.findActiveByDataSource(
       dataSource.id,
     );
-    const queryConfig = this.buildQueryConfig(dto, properties);
+    const viewConfig = dto.viewId
+      ? await this.findViewQueryConfig(dto.viewId, dataSource.id)
+      : undefined;
+    const queryConfig = this.buildQueryConfig(dto, properties, viewConfig);
+    const { visiblePropertyIds, ...repoQueryConfig } = queryConfig;
     const result = await this.recordRepo.query({
       databaseId: dataSource.id,
       limit: dto.limit ?? 50,
       cursor: dto.cursor,
-      ...queryConfig,
+      ...repoQueryConfig,
     });
     const recordIds = result.items.map((record) => record.id);
     const values = await this.findValuesByRecordIds(recordIds);
@@ -144,6 +164,12 @@ export class RecordService {
       Record<string, RecordValueResponse>
     >();
     for (const value of values) {
+      if (
+        visiblePropertyIds &&
+        !visiblePropertyIds.has(value.propertyId)
+      ) {
+        continue;
+      }
       const bucket = valuesByRecordId.get(value.recordId) ?? {};
       bucket[value.propertyId] = toRecordValueResponse(value);
       valuesByRecordId.set(value.recordId, bucket);
@@ -157,30 +183,28 @@ export class RecordService {
     };
   }
 
-  private async upsertValue(
-    record: DataSourceRecord,
+  private normalizeValue(
     property: DataSourceProperty,
     value: unknown,
     user: User,
-    trx: KyselyTransaction,
-  ): Promise<DataSourcePropertyValue> {
+  ): Omit<DataSourcePropertyValueInsert, 'dataSourceId' | 'recordId'> {
     const normalized = normalizePropertyValue({
       type: property.type,
       value,
       config: property.configJson as Record<string, any>,
     });
-    await this.validatePersonUsers(property, normalized.valueJson, user, trx);
-    return this.propertyValueRepo.upsert(
-      {
-        dataSourceId: record.dataSourceId,
-        recordId: record.id,
-        propertyId: property.id,
-        createdById: user.id,
-        lastEditedById: user.id,
-        ...normalized,
-      } as any,
-      trx,
-    );
+    return {
+      propertyId: property.id,
+      createdById: user.id,
+      lastEditedById: user.id,
+      ...normalized,
+      valueJson: normalized.valueJson as Json,
+      personUserIds:
+        property.type === DataSourcePropertyType.Person &&
+        normalized.valueJson !== null
+          ? (normalized.valueJson as string[])
+          : [],
+    };
   }
 
   private async findValuesByRecordIds(recordIds: string[]) {
@@ -190,18 +214,24 @@ export class RecordService {
   private buildQueryConfig(
     dto: QueryRecordsDto,
     properties: DataSourceProperty[],
-  ): Pick<DataSourceRecordQueryOptions, 'filter' | 'sort'> {
+    viewConfig?: ViewQueryConfig,
+  ): Pick<DataSourceRecordQueryOptions, 'filter' | 'sort'> & {
+    visiblePropertyIds?: Set<string>;
+  } {
     const propertyById = new Map(properties.map((item) => [item.id, item]));
-    const filter = this.buildFilter(dto.filter, propertyById);
-    const sort = this.buildSort(dto.sort, propertyById);
-    if (dto.cursor && sort) {
-      throw new BadRequestException(
-        'Sorted cursor pagination is not supported in phase one',
-      );
-    }
+    const viewFilter = this.buildFilter(viewConfig?.filter, propertyById);
+    const requestFilter = this.buildFilter(dto.filter, propertyById);
+    const filter =
+      viewFilter && requestFilter
+        ? ({ and: [viewFilter, requestFilter] } as DataSourceRecordQueryFilter)
+        : (requestFilter ?? viewFilter);
+    const sort = this.buildSort(dto.sort ?? viewConfig?.sort, propertyById);
     return {
       ...(filter ? { filter } : {}),
       ...(sort ? { sort } : {}),
+      ...(viewConfig?.visiblePropertyIds
+        ? { visiblePropertyIds: new Set(viewConfig.visiblePropertyIds) }
+        : {}),
     };
   }
 
@@ -210,14 +240,42 @@ export class RecordService {
     propertyById: Map<string, DataSourceProperty>,
   ): DataSourceRecordQueryFilter | undefined {
     if (filter === undefined || filter === null) return undefined;
+    const leafCount = { value: 0 };
+    return this.buildFilterNode(filter, propertyById, 1, leafCount);
+  }
+
+  private buildFilterNode(
+    filter: unknown,
+    propertyById: Map<string, DataSourceProperty>,
+    depth: number,
+    leafCount: { value: number },
+  ): DataSourceRecordQueryFilter {
     if (!isRecord(filter)) throw new BadRequestException('Invalid filter');
+    if (depth > 3) throw new BadRequestException('Filter is too deeply nested');
+
+    if (Array.isArray(filter.and) || Array.isArray(filter.or)) {
+      const key = Array.isArray(filter.and) ? 'and' : 'or';
+      const children = filter[key];
+      if (!Array.isArray(children) || children.length === 0) {
+        throw new BadRequestException('Invalid filter group');
+      }
+      return {
+        [key]: children.map((child) =>
+          this.buildFilterNode(child, propertyById, depth + 1, leafCount),
+        ),
+      } as DataSourceRecordQueryFilter;
+    }
 
     const { propertyId, operator, value } = filter;
     if (typeof propertyId !== 'string') {
       throw new BadRequestException('Invalid filter property');
     }
-    if (operator !== 'contains' && operator !== 'equals') {
+    if (typeof operator !== 'string') {
       throw new BadRequestException('Invalid filter operator');
+    }
+    leafCount.value += 1;
+    if (leafCount.value > 20) {
+      throw new BadRequestException('Too many filter conditions');
     }
 
     const property = propertyById.get(propertyId);
@@ -234,38 +292,49 @@ export class RecordService {
     if (operator === 'contains' && typeof value !== 'string') {
       throw new BadRequestException('Filter value must be a string');
     }
+    if (!isSupportedFilterOperator(property.type, operator)) {
+      throw new BadRequestException('Unsupported filter operator');
+    }
 
     return {
       propertyId,
       type: property.type,
-      operator,
-      value:
-        operator === 'equals' ? normalizeFilterValue(property, value) : value,
-    };
+      operator: operator as DataSourceRecordQueryFilterOperator,
+      ...(operatorRequiresValue(operator)
+        ? { value: normalizeFilterValue(property, operator, value) }
+        : {}),
+    } as DataSourceRecordQueryFilter;
   }
 
   private buildSort(
     sort: unknown,
     propertyById: Map<string, DataSourceProperty>,
-  ): DataSourceRecordQuerySort | undefined {
+  ): DataSourceRecordQuerySort[] | undefined {
     if (sort === undefined || sort === null) return undefined;
-    if (!isRecord(sort)) throw new BadRequestException('Invalid sort');
-
-    const { propertyId, direction = 'asc' } = sort;
-    if (typeof propertyId !== 'string') {
-      throw new BadRequestException('Invalid sort property');
+    const sortItems = Array.isArray(sort) ? sort : [sort];
+    if (sortItems.length > 3) {
+      throw new BadRequestException('Too many sort conditions');
     }
-    if (direction !== 'asc' && direction !== 'desc') {
-      throw new BadRequestException('Invalid sort direction');
-    }
+    if (sortItems.length === 0) return undefined;
 
-    const property = propertyById.get(propertyId);
-    if (!property) throw new BadRequestException('Sort property not found');
-    if (!isSupportedSortType(property.type)) {
-      throw new BadRequestException('Unsupported sort property type');
-    }
+    return sortItems.map((item) => {
+      if (!isRecord(item)) throw new BadRequestException('Invalid sort');
+      const { propertyId, direction = 'asc' } = item;
+      if (typeof propertyId !== 'string') {
+        throw new BadRequestException('Invalid sort property');
+      }
+      if (direction !== 'asc' && direction !== 'desc') {
+        throw new BadRequestException('Invalid sort direction');
+      }
 
-    return { propertyId, type: property.type, direction };
+      const property = propertyById.get(propertyId);
+      if (!property) throw new BadRequestException('Sort property not found');
+      if (!isSupportedSortType(property.type)) {
+        throw new BadRequestException('Unsupported sort property type');
+      }
+
+      return { propertyId, type: property.type, direction };
+    });
   }
 
   private async findActiveDataSource(databaseId: string) {
@@ -280,6 +349,27 @@ export class RecordService {
     return record;
   }
 
+  private async findViewQueryConfig(
+    viewId: string,
+    dataSourceId: string,
+  ): Promise<ViewQueryConfig> {
+    const view = await this.viewRepo.findActiveById(viewId);
+    if (!view || view.dataSourceId !== dataSourceId) {
+      throw new NotFoundException('View not found');
+    }
+    const config = isRecord(view.configJson) ? view.configJson : {};
+    return {
+      filter: config.filter,
+      sort: config.sort,
+      visiblePropertyIds: Array.isArray(config.visiblePropertyIds)
+        ? config.visiblePropertyIds.filter(
+            (propertyId): propertyId is string =>
+              typeof propertyId === 'string',
+          )
+        : undefined,
+    };
+  }
+
   private async validateRead(dataSource: any, user: User): Promise<void> {
     await this.permissionService.validateRead(dataSource, user);
   }
@@ -288,22 +378,20 @@ export class RecordService {
     await this.permissionService.validateWrite(dataSource, user);
   }
 
-  private async validatePersonUsers(
-    property: DataSourceProperty,
-    value: unknown,
+  private async validatePersonUserIds(
+    userIds: string[],
     user: User,
     trx: KyselyTransaction,
   ): Promise<void> {
-    if (property.type !== DataSourcePropertyType.Person || value === null) {
-      return;
-    }
-    for (const userId of value as string[]) {
-      const workspaceUser = await this.userRepo.findById(
-        userId,
-        user.workspaceId,
-        { trx },
-      );
-      if (!workspaceUser) throw new BadRequestException('User not found');
+    const uniqueUserIds = Array.from(new Set(userIds));
+    if (uniqueUserIds.length === 0) return;
+    const workspaceUsers = await this.userRepo.findByIds(
+      uniqueUserIds,
+      user.workspaceId,
+      { trx },
+    );
+    if (workspaceUsers.length !== uniqueUserIds.length) {
+      throw new BadRequestException('User not found');
     }
   }
 }
@@ -322,6 +410,39 @@ function isTextFilterType(type: string): boolean {
   ].includes(type as DataSourcePropertyType);
 }
 
+function isSupportedFilterOperator(type: string, operator: string): boolean {
+  if (isTextFilterType(type)) {
+    return ['equals', 'contains', 'is_empty', 'is_not_empty'].includes(
+      operator,
+    );
+  }
+  if (type === DataSourcePropertyType.Number) {
+    return [
+      'equals',
+      'greater_than',
+      'less_than',
+      'is_empty',
+      'is_not_empty',
+    ].includes(operator);
+  }
+  if (type === DataSourcePropertyType.Checkbox) {
+    return operator === 'equals';
+  }
+  if (type === DataSourcePropertyType.Date) {
+    return ['equals', 'before', 'after', 'is_empty', 'is_not_empty'].includes(
+      operator,
+    );
+  }
+  if (type === DataSourcePropertyType.Select) {
+    return ['equals', 'is_empty', 'is_not_empty'].includes(operator);
+  }
+  return false;
+}
+
+function operatorRequiresValue(operator: string): boolean {
+  return operator !== 'is_empty' && operator !== 'is_not_empty';
+}
+
 function isSupportedSortType(type: string): boolean {
   return [
     DataSourcePropertyType.Title,
@@ -338,6 +459,7 @@ function isSupportedSortType(type: string): boolean {
 
 function normalizeFilterValue(
   property: DataSourceProperty,
+  operator: string,
   value: unknown,
 ): unknown {
   const normalized = normalizePropertyValue({
@@ -354,6 +476,9 @@ function normalizeFilterValue(
     return normalized.boolValue;
   }
   if (property.type === DataSourcePropertyType.Date) {
+    if (operator === 'equals') {
+      return normalized.valueJson;
+    }
     return normalized.dateValue;
   }
   return normalized.textValue;
@@ -375,6 +500,19 @@ type RecordValueResponse = {
   value: unknown;
   version: number;
   updatedAt: Date;
+};
+
+type ViewQueryConfig = {
+  filter?: unknown;
+  sort?: unknown;
+  visiblePropertyIds?: string[];
+};
+
+type DataSourcePropertyValueInsert = Omit<
+  InsertableDataSourcePropertyValue,
+  'version'
+> & {
+  personUserIds: string[];
 };
 
 function toRecordValueResponse(
