@@ -136,7 +136,7 @@ export class DataSourceRecordRepo {
     await dbOrTx(this.db, trx)
       .updateTable('dataSourceRecords')
       .set({
-        version: sql<number>`data_source_records.version + 1`,
+        version: sql<number>`version + 1`,
         updatedAt: new Date(),
       })
       .where('id', '=', id)
@@ -197,31 +197,44 @@ export class DataSourceRecordRepo {
       .where('dataSourceRecords.deletedAt', 'is', null);
 
     if (opts.filter) {
-      query = query
-        .innerJoin(
-          'dataSourcePropertyValues as filterValue',
-          'filterValue.recordId',
-          'dataSourceRecords.id',
-        )
-        .where('filterValue.propertyId', '=', opts.filter.propertyId)
-        .where('filterValue.deletedAt', 'is', null);
-
       const column = propertyValueColumn(opts.filter.type);
+      if (opts.filter.operator === 'equals' && opts.filter.value === null) {
+        query = query
+          .leftJoin('dataSourcePropertyValues as filterValue', (join) =>
+            join
+              .onRef('filterValue.recordId', '=', 'dataSourceRecords.id')
+              .on('filterValue.propertyId', '=', opts.filter.propertyId)
+              .on('filterValue.deletedAt', 'is', null),
+          )
+          .where((eb) =>
+            eb.or([
+              eb('filterValue.id', 'is', null),
+              eb(`filterValue.${column}`, 'is', null),
+            ]),
+          );
+      } else {
+        query = query
+          .innerJoin(
+            'dataSourcePropertyValues as filterValue',
+            'filterValue.recordId',
+            'dataSourceRecords.id',
+          )
+          .where('filterValue.propertyId', '=', opts.filter.propertyId)
+          .where('filterValue.deletedAt', 'is', null);
+      }
+
       if (opts.filter.operator === 'contains') {
         query = query.where(
           'filterValue.textValue',
           'ilike',
           `%${String(opts.filter.value)}%`,
         );
-      } else {
-        query =
-          opts.filter.value === null
-            ? query.where(`filterValue.${column}`, 'is', null)
-            : query.where(
-                `filterValue.${column}`,
-                '=',
-                opts.filter.value as never,
-              );
+      } else if (opts.filter.value !== null) {
+        query = query.where(
+          `filterValue.${column}`,
+          '=',
+          opts.filter.value as never,
+        );
       }
     }
 
@@ -234,8 +247,7 @@ export class DataSourceRecordRepo {
             .on('sortValue.deletedAt', 'is', null),
         )
         .orderBy(
-          `sortValue.${propertyValueColumn(opts.sort.type)}`,
-          opts.sort.direction,
+          sql`${sql.ref(`sortValue.${propertyValueColumn(opts.sort.type)}`)} ${sql.raw(opts.sort.direction)} nulls last`,
         );
     }
 

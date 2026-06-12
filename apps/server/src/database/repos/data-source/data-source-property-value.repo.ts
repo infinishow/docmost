@@ -47,7 +47,7 @@ export class DataSourcePropertyValueRepo {
           lastEditedById: eb.ref('excluded.lastEditedById'),
           updatedAt: new Date(),
           deletedAt: null,
-          version: sql<number>`data_source_property_values.version + 1`,
+          version: sql<number>`version + 1`,
         })),
       )
       .returning(this.fields)

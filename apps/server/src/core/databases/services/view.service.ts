@@ -59,6 +59,13 @@ export class ViewService {
     const dataSource = await this.findActiveDataSource(view.dataSourceId);
     await this.validateWrite(dataSource, user);
     await executeTx(this.db, async (trx) => {
+      await trx
+        .selectFrom('dataSources')
+        .select('id')
+        .where('id', '=', dataSource.id)
+        .forUpdate()
+        .executeTakeFirst();
+
       const count = await this.viewRepo.countActiveByDataSource(
         dataSource.id,
         trx,

@@ -1,4 +1,4 @@
-import { type Kysely, sql } from 'kysely';
+import { type Kysely, type SqlBool, sql } from 'kysely';
 
 export async function up(db: Kysely<any>): Promise<void> {
   await db.schema
@@ -211,8 +211,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .on('data_source_properties')
     .column('data_source_id')
     .unique()
-    .where(sql.ref('type'), '=', 'title')
-    .where(sql.ref('deleted_at'), 'is', null)
+    .where(sql<SqlBool>`type = 'title' AND deleted_at IS NULL`)
     .execute();
 
   await db.schema
