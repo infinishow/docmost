@@ -24,6 +24,7 @@ import { WatcherModule } from './watcher/watcher.module';
 import { FavoriteModule } from './favorite/favorite.module';
 import { SessionModule } from './session/session.module';
 import { ClsMiddleware } from 'nestjs-cls';
+import { DatabasesModule } from './databases/databases.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ClsMiddleware } from 'nestjs-cls';
     NotificationModule,
     WatcherModule,
     SessionModule,
+    DatabasesModule,
   ],
 })
 export class CoreModule implements NestModule {

@@ -55,6 +55,7 @@ import { markdownToHtml } from '@docmost/editor-ext';
 import { WatcherService } from '../../watcher/watcher.service';
 import { sql } from 'kysely';
 import { TransclusionService } from '../transclusion/transclusion.service';
+import { DataSourceRepo } from '@docmost/db/repos/data-source/data-source.repo';
 
 @Injectable()
 export class PageService {
@@ -64,6 +65,7 @@ export class PageService {
     private pageRepo: PageRepo,
     private pagePermissionRepo: PagePermissionRepo,
     private attachmentRepo: AttachmentRepo,
+    private readonly dataSourceRepo: DataSourceRepo,
     @InjectKysely() private readonly db: KyselyDB,
     private readonly storageService: StorageService,
     @InjectQueue(QueueName.ATTACHMENT_QUEUE) private attachmentQueue: Queue,
@@ -469,6 +471,12 @@ export class PageService {
         await this.attachmentRepo.updateAttachmentsByPageId(
           { spaceId },
           pageIdsToMove,
+          trx,
+        );
+
+        await this.dataSourceRepo.updateSpaceForParentPages(
+          pageIdsToMove,
+          spaceId,
           trx,
         );
 

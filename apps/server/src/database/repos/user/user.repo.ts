@@ -60,6 +60,23 @@ export class UserRepo {
       .executeTakeFirst();
   }
 
+  async findByIds(
+    userIds: string[],
+    workspaceId: string,
+    opts?: {
+      trx?: KyselyTransaction;
+    },
+  ): Promise<User[]> {
+    if (userIds.length === 0) return [];
+    const db = dbOrTx(this.db, opts?.trx);
+    return db
+      .selectFrom('users')
+      .select(this.baseFields)
+      .where('id', 'in', userIds)
+      .where('workspaceId', '=', workspaceId)
+      .execute();
+  }
+
   async findByEmail(
     email: string,
     workspaceId: string,
